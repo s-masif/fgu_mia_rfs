@@ -1,3 +1,20 @@
+"""Shokri shadow-model membership inference, with the corrected evaluation
+protocol.
+
+Protocol requirements implemented here:
+  R2  Identity-disjoint pools. The attack is FIT on shadow member/non-member
+      outputs and CALIBRATED on a held-out slice of shadow non-members. The
+      caller must guarantee that the global node identities of the final
+      evaluation nodes (the forget set F, the held-out reference H, and the
+      clean attack-strength member/non-member set) are NOT present in the fit or
+      calibration pools. `assert_pools_disjoint` checks this from global IDs.
+  R3  Out-of-sample threshold at a fixed operating point (alpha = 0.10),
+      calibrated on the calibration pool and then FROZEN. `fallback_used` is
+      recorded when the target FPR cannot be achieved.
+  R4  The frozen attacker is applied unchanged to M0 and MR.
+
+The attack summary AUC is attack strength only; it is not a forgetting measure.
+"""
 import numpy as np
 import torch
 import torch.nn as nn
