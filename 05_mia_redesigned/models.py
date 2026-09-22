@@ -328,9 +328,15 @@ def get_metrics(model, clients, mask_type='val'):
     all_preds, all_labels = [], []
     for i, c in enumerate(clients):
         if mask_type == 'val':
-            mask = c['val_mask'] if c['val_mask'].sum() > 0 else c['test_mask']
+            # Validation-only selection. A client with no validation nodes is
+            # skipped for this metric; the test set is never used here (Point 2).
+            mask = c['val_mask']
+            if mask.sum() == 0:
+                continue
         else:
-            mask = c['test_mask'] if c['test_mask'].sum() > 0 else c['val_mask']
+            mask = c['test_mask']
+            if mask.sum() == 0:
+                continue
         with torch.no_grad():
             out = model(c['features'], c['adj'], i)
             preds = out[mask].argmax(1)
