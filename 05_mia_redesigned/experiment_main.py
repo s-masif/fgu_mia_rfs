@@ -1,3 +1,24 @@
+"""Client-level core experiment (PRD Phase A).
+
+End-to-end pipeline for one (dataset, scenario, seed) cell:
+
+  1. Load graph, partition into clients, apply per-client train/val/test split.
+  2. Train the ORIGINAL model M0 on all clients (val-only selection, R1).
+  3. Define the forget set F and a matched held-out reference H.
+  4. Train the RETRAINED reference MR on the retain set (R1).
+  5. Train shadow models; build IDENTITY-DISJOINT attack pools (R2):
+       - fit pool         : shadow member/non-member outputs
+       - calibration pool : held-out shadow non-members (disjoint from fit)
+       - evaluation pool  : target nodes (attack-strength set excluding F, plus F, plus H)
+     F, H, and evaluation node identities are removed from fit/calibration.
+  6. Fit the attack on the fit pool; calibrate the threshold at alpha=0.10 on the
+     calibration pool; FREEZE (R3).
+  7. Apply the frozen attack to M0 and MR with the same query context (R4),
+     logging one row per queried node (Section 4).
+  8. Record the transition endpoints: s(F;M0) vs s(F;MR), C_cal, C_F (Section 3).
+
+The global member-vs-non-member AUC is recorded as attack strength only (C1).
+"""
 from __future__ import annotations
 
 import argparse
@@ -42,9 +63,43 @@ def _global_ids(cl, local_idx):
     return ni[local_idx]
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  Held-out reference H (client-level): a whole retain client set aside as a
+#  never-seen, matched non-member reference. It is excluded from MR training and
+#  from the attack fit/calibration pools, and used only as a reference under MR.
+# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+#  Attack-pool construction (R2) — client scenario
+#
+#  Evaluation pool (target nodes, scored under M0 and MR):
+#    - attack-strength members    : retain-client train nodes  (member=1), EXCLUDING F and H
+#    - attack-strength non-members: retain-client test  nodes  (member=0)
+#    - forget set F               : forget-client train nodes  (member=0 under MR)
+#    - held-out reference H        : held-out-client train nodes (member=0)
+#
+#  Fit / calibration pools come from the SHADOW models. We additionally guarantee
+#  that no evaluation global ID (F, H, or attack-strength nodes) appears in the
+#  fit or calibration pools, by excluding those identities.
+# ─────────────────────────────────────────────────────────────────────────────
 def build_eval_pool_client(model, clients, forget_clients, stage,
                            eval_member_ids=None, eval_nonmember_ids=None):
+    """Evaluation pool for one stage ("M0" or "MR"), carrying global IDs.
 
+    Roles (Points 1 and 3):
+      F                : forgotten client's TRAIN nodes.
+                         label 1 under M0 (they were trained on), 0 under MR.
+      H                : forgotten client's TEST nodes (never trained on).
+                         label 0 under both stages. Used only as the matched
+                         never-seen reference.
+      attack_member    : retained clients' train nodes in the designated
+                         evaluation-member slice (label 1).
+      attack_nonmember : retained clients' test nodes in the designated
+                         evaluation-nonmember slice (label 0). The forgotten
+                         client's test nodes are NOT included here; they are H.
+    F and H are scored by running `model` over the forgotten client's own
+    subgraph (its adjacency and features); the client is excluded from MR's
+    training and selection but remains in the graph.
+    """
     assert stage in ("M0", "MR")
     forget_set = set(forget_clients)
     f_label = 1 if stage == "M0" else 0
@@ -113,7 +168,10 @@ def build_eval_pool_client(model, clients, forget_clients, stage,
 # ─────────────────────────────────────────────────────────────────────────────
 def build_shadow_pools(cfg, data, clients, seed, exclude_global_ids,
                        n_shadow=5, shadow_frac=0.5, calib_frac=0.3):
-    
+    """Train shadow models and return (fit, calib) pools of (probs, member, cls),
+    with all rows whose global ID is in `exclude_global_ids` removed. The calib
+    pool is a held-out slice (by identity) of the shadow NON-members.
+    """
     exclude = set(int(g) for g in exclude_global_ids)
     rng = np.random.default_rng(seed + 12345)
     n_clients = len(clients)
