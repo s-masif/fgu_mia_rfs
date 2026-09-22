@@ -40,113 +40,109 @@ class Results:
 
 
 def test_cell(nodelog_path, summary_row, manifest):
+    """Integrity checks are PASS/FAIL. Scientific quantities are DIAGNOSTICS:
+    reported for inspection, never judged (Point 6)."""
     df = pd.read_csv(nodelog_path)
     tag = Path(nodelog_path).stem.replace("nodelog_","")
     R = Results(tag)
+    diag = []
 
-    # ── Structural / schema ──────────────────────────────────────────────
-    R.check("Sec4 log has all 15 columns",
-            list(df.columns) == NODE_LOG_COLUMNS,
-            f"cols={list(df.columns)}")
+    # ═══════════ INTEGRITY (PASS/FAIL) ═══════════
 
-    R.check("S1 no NaN scores", not df.mia_score.isna().any(),
+    R.check("schema: log has all 15 columns",
+            list(df.columns) == NODE_LOG_COLUMNS, f"cols={list(df.columns)}")
+    R.check("no NaN scores", not df.mia_score.isna().any(),
             f"{int(df.mia_score.isna().sum())} NaN")
 
-    # ── E4/R4: frozen attack (thresholds identical M0 vs MR per class) ────
+    # Stage-aware labels (Point 1): F=1 under M0, F=0 under MR; H=0 both;
+    # attack_member=1; attack_nonmember=0.
+    def lab(stage, subset):
+        v = df[(df.stage==stage)&(df.subset==subset)].membership_label
+        return set(v.unique().tolist()) if len(v) else set()
+    R.check("labels: F=1 under M0", lab("M0","F") == {1}, str(lab("M0","F")))
+    R.check("labels: F=0 under MR", lab("MR","F") == {0}, str(lab("MR","F")))
+    R.check("labels: H=0 under M0 and MR",
+            lab("M0","H") == {0} and lab("MR","H") == {0},
+            f"M0={lab('M0','H')} MR={lab('MR','H')}")
+    R.check("labels: attack_member=1, attack_nonmember=0",
+            lab("MR","attack_member") == {1} and lab("MR","attack_nonmember") == {0})
+
+    # Frozen attack: thresholds identical M0 vs MR per class (R4)
     frozen = True
     for cls in df.true_class.unique():
         t0 = set(np.round(df[(df.stage=="M0")&(df.true_class==cls)].threshold, 6))
         t1 = set(np.round(df[(df.stage=="MR")&(df.true_class==cls)].threshold, 6))
         if t0 != t1: frozen = False
-    R.check("E4/R4 attack frozen (M0 thresholds == MR)", frozen)
+    R.check("attack frozen (M0 thresholds == MR)", frozen)
 
-    # ── D2: F pairing (same nodes scored under both stages) ──────────────
-    f0 = set(df[(df.stage=="M0")&(df.subset=="F")].global_node_id)
-    f1 = set(df[(df.stage=="MR")&(df.subset=="F")].global_node_id)
-    R.check("D2 F-set paired across M0 and MR", f0 == f1 and len(f0) > 0,
-            f"M0={len(f0)} MR={len(f1)}")
+    # Paired F and H across stages
+    for sub in ("F","H"):
+        a = set(df[(df.stage=="M0")&(df.subset==sub)].global_node_id)
+        b = set(df[(df.stage=="MR")&(df.subset==sub)].global_node_id)
+        R.check(f"{sub} paired across M0 and MR", a == b and len(a) > 0,
+                f"M0={len(a)} MR={len(b)}")
 
-    # ── membership labels correct per subset ─────────────────────────────
-    ml = df.groupby("subset").membership_label.mean().to_dict()
-    labels_ok = (ml.get("attack_member")==1.0 and
-                 all(ml.get(k,0.0)==0.0 for k in ["F","H","attack_nonmember"]))
-    R.check("labels: member=1, F/H/nonmember=0", labels_ok, str(ml))
-
-    # ── D1: evaluation subsets non-empty ─────────────────────────────────
+    # All four eval subsets present
     mr_counts = df[df.stage=="MR"].subset.value_counts().to_dict()
-    R.check("D1 all four eval subsets non-empty",
+    R.check("all four eval subsets non-empty",
             all(mr_counts.get(k,0)>0 for k in ["F","H","attack_member","attack_nonmember"]),
             str(mr_counts))
 
-    # ── E2: transition direction (F member-rate drops M0 -> MR) ──────────
-    fr_m0 = df[(df.stage=="M0")&(df.subset=="F")].decision.mean()
-    fr_mr = df[(df.stage=="MR")&(df.subset=="F")].decision.mean()
-    R.check("E2 transition: forget member-rate drops M0->MR",
-            fr_mr <= fr_m0 + TOL, f"M0={fr_m0:.3f} MR={fr_mr:.3f}")
+    # Point 3: forgotten client's nodes must not appear in attack-strength pools
+    if manifest is not None and "removed_client_ids" in manifest:
+        forgot = set(manifest["removed_client_ids"])
+        leak = df[df.subset.isin(["attack_member","attack_nonmember"]) & df.client_id.isin(forgot)]
+        R.check("forgotten client absent from attack-strength pools",
+                len(leak) == 0, f"{len(leak)} leaked rows")
+        # and F/H come only from the forgotten client
+        fh = df[df.subset.isin(["F","H"])]
+        R.check("F and H come only from the forgotten client",
+                set(fh.client_id.unique()) <= forgot, str(set(fh.client_id.unique())))
 
-    # ── S2: attack works (member scores above forget under MR) ───────────
-    mr = df[df.stage=="MR"].groupby("subset").mia_score.mean().to_dict()
-    R.check("S2 MR ordering: attack_member > F",
-            mr.get("attack_member",0) > mr.get("F",1),
-            f"member={mr.get('attack_member',0):.3f} F={mr.get('F',1):.3f}")
-
-    # ── S3/S4: endpoints recomputed from the log match the summary ───────
+    # Raw/summary consistency (no-rerun principle)
     fpr_H = df[(df.stage=="MR")&(df.subset=="H")].decision.mean()
     fpr_F = df[(df.stage=="MR")&(df.subset=="F")].decision.mean()
-    C_F_log   = fpr_F - fpr_H
-    C_cal_log = fpr_H - ALPHA
     if summary_row is not None:
-        R.check("S3 C_F(log) == C_F(summary)",
-                abs(C_F_log - summary_row["C_F"]) < 1e-4,
-                f"log={C_F_log:.4f} sum={summary_row['C_F']:.4f}")
-        R.check("S4 C_cal(log) == C_cal(summary)",
-                abs(C_cal_log - summary_row["C_cal"]) < 1e-4,
-                f"log={C_cal_log:.4f} sum={summary_row['C_cal']:.4f}")
-        R.check("E2 forget_rate_MR(log)==summary",
-                abs(fpr_F - summary_row["forget_member_rate_MR"]) < 1e-4,
-                f"log={fpr_F:.4f} sum={summary_row['forget_member_rate_MR']:.4f}")
+        R.check("C_F(log) == C_F(summary)",
+                abs((fpr_F - fpr_H) - summary_row["C_F"]) < 1e-4,
+                f"log={fpr_F-fpr_H:.4f} sum={summary_row['C_F']:.4f}")
+        R.check("C_cal(log) == C_cal(summary)",
+                abs((fpr_H - ALPHA) - summary_row["C_cal"]) < 1e-4,
+                f"log={fpr_H-ALPHA:.4f} sum={summary_row['C_cal']:.4f}")
 
-    # ── R3: calibration transports (|C_cal| within tolerance) ────────────
-    R.check(f"R3 calibration drift |C_cal| <= {CAL_TOL}",
-            abs(C_cal_log) <= CAL_TOL,
-            f"C_cal={C_cal_log:+.3f}")
-
-    # ── R5: corrected gap (train acc > test acc, gap plausible) ──────────
-    if summary_row is not None:
-        gap_ok = (summary_row["acc_train"] >= summary_row["acc_test"]
-                  and 0 <= summary_row["train_test_gap"] < 1.0)
-        R.check("R5 gap: acc_train>=acc_test, 0<=gap<1", gap_ok,
-                f"train={summary_row['acc_train']:.3f} test={summary_row['acc_test']:.3f} "
-                f"gap={summary_row['train_test_gap']:.3f}")
-
-    # ── E5/R2: identity-disjoint pools (verified from manifest IDs) ──────
+    # Disjoint pools from manifest (R2)
     if manifest is not None and "fit_global_ids" in manifest:
         fit_ids   = set(manifest.get("fit_global_ids", []))
         calib_ids = set(manifest.get("calib_global_ids", []))
         eval_ids  = set(manifest.get("eval_global_ids", []))
-        leak_fit   = eval_ids & fit_ids
-        leak_calib = eval_ids & calib_ids
-        leak_fc    = fit_ids & calib_ids
-        R.check("E5/R2 eval ∩ fit == ∅", len(leak_fit) == 0,
-                f"{len(leak_fit)} eval IDs in fit pool")
-        R.check("E5/R2 eval ∩ calibration == ∅", len(leak_calib) == 0,
-                f"{len(leak_calib)} eval IDs in calibration pool")
-        R.check("E5/R2 fit ∩ calibration == ∅", len(leak_fc) == 0,
-                f"{len(leak_fc)} IDs shared by fit and calibration")
-        R.check("E5/R2 fit & calibration pools non-empty",
-                len(fit_ids) > 0 and len(calib_ids) > 0,
-                f"fit={len(fit_ids)} calib={len(calib_ids)}")
+        R.check("eval ∩ fit == ∅", not (eval_ids & fit_ids), f"{len(eval_ids & fit_ids)} leaked")
+        R.check("eval ∩ calibration == ∅", not (eval_ids & calib_ids), f"{len(eval_ids & calib_ids)} leaked")
+        R.check("fit ∩ calibration == ∅", not (fit_ids & calib_ids), f"{len(fit_ids & calib_ids)} shared")
+        R.check("fit & calibration non-empty", len(fit_ids)>0 and len(calib_ids)>0)
 
-    # ── Sec4 provenance: manifest has commit_hash + split_ratios ─────────
+    # Provenance
     if manifest is not None:
-        R.check("Sec4 manifest commit_hash populated",
-                manifest.get("commit_hash") not in (None, "null"),
-                f"={manifest.get('commit_hash')}")
-        R.check("Sec4 manifest split_ratios populated",
-                manifest.get("split_ratios") not in (None, "null"),
-                f"={manifest.get('split_ratios')}")
+        R.check("manifest commit_hash populated", manifest.get("commit_hash") not in (None,"null"))
+        R.check("manifest split_ratios populated", manifest.get("split_ratios") not in (None,"null"))
 
-    return R
+    # ═══════════ DIAGNOSTICS (reported, not judged) ═══════════
+    fr_m0 = df[(df.stage=="M0")&(df.subset=="F")].decision.mean()
+    fr_mr = df[(df.stage=="MR")&(df.subset=="F")].decision.mean()
+    diag.append(f"F member rate: M0={fr_m0:.3f} -> MR={fr_mr:.3f}  (change={fr_mr-fr_m0:+.3f})")
+    diag.append(f"H member rate under MR = {fpr_H:.3f}   C_cal = {fpr_H-ALPHA:+.3f}   C_F = {fpr_F-fpr_H:+.3f}")
+    mr = df[df.stage=="MR"].groupby("subset").mia_score.mean().to_dict()
+    diag.append("MR mean score by subset: " + ", ".join(f"{k}={v:.3f}" for k,v in mr.items()))
+    if summary_row is not None:
+        diag.append(f"gap: acc_train={summary_row['acc_train']:.3f} acc_test={summary_row['acc_test']:.3f} "
+                    f"gap={summary_row['train_test_gap']:.3f}")
+        if "attack_strength_auc" in summary_row:
+            diag.append(f"attack strength (retained pool, MR): AUC={summary_row['attack_strength_auc']:.3f} "
+                        f"TPR@alpha={summary_row.get('attack_tpr_at_alpha', float('nan')):.3f} "
+                        f"FPR@alpha={summary_row.get('attack_fpr_at_alpha', float('nan')):.3f}")
+    nfb = int(df.fallback_status.astype(str).str.lower().eq("true").sum())
+    diag.append(f"rows scored with pooled fallback attack: {nfb}")
+
+    return R, diag
 
 
 def main():
@@ -187,9 +183,13 @@ def main():
         manifest = json.load(open(mpath)) if mpath.exists() else None
 
         print(f"── {stem} ──")
-        R = test_cell(lg, srow, manifest)
+        R, diag = test_cell(lg, srow, manifest)
         ok = R.report()
-        print(f"    {R.passed} passed, {R.failed} failed\n")
+        print(f"    {R.passed} passed, {R.failed} failed")
+        print("    diagnostics (not judged):")
+        for d in diag:
+            print(f"      · {d}")
+        print()
         all_pass = all_pass and ok
 
     print("=" * 50)
