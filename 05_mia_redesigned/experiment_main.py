@@ -1,24 +1,3 @@
-"""Client-level core experiment (PRD Phase A).
-
-End-to-end pipeline for one (dataset, scenario, seed) cell:
-
-  1. Load graph, partition into clients, apply per-client train/val/test split.
-  2. Train the ORIGINAL model M0 on all clients (val-only selection, R1).
-  3. Define the forget set F and a matched held-out reference H.
-  4. Train the RETRAINED reference MR on the retain set (R1).
-  5. Train shadow models; build IDENTITY-DISJOINT attack pools (R2):
-       - fit pool         : shadow member/non-member outputs
-       - calibration pool : held-out shadow non-members (disjoint from fit)
-       - evaluation pool  : target nodes (attack-strength set excluding F, plus F, plus H)
-     F, H, and evaluation node identities are removed from fit/calibration.
-  6. Fit the attack on the fit pool; calibrate the threshold at alpha=0.10 on the
-     calibration pool; FREEZE (R3).
-  7. Apply the frozen attack to M0 and MR with the same query context (R4),
-     logging one row per queried node (Section 4).
-  8. Record the transition endpoints: s(F;M0) vs s(F;MR), C_cal, C_F (Section 3).
-
-The global member-vs-non-member AUC is recorded as attack strength only (C1).
-"""
 from __future__ import annotations
 
 import argparse
@@ -63,38 +42,12 @@ def _global_ids(cl, local_idx):
     return ni[local_idx]
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Held-out reference H (client-level): a whole retain client set aside as a
-#  never-seen, matched non-member reference. It is excluded from MR training and
-#  from the attack fit/calibration pools, and used only as a reference under MR.
-# ─────────────────────────────────────────────────────────────────────────────
-def define_heldout_client(n_clients, forget_clients, seed, size):
-    """Pick `size` retain clients (disjoint from forget) as the held-out set H."""
-    rng = np.random.default_rng(seed + 777)
-    candidates = [c for c in range(n_clients) if c not in set(forget_clients)]
-    size = min(size, len(candidates))
-    return sorted(rng.choice(candidates, size=size, replace=False).tolist())
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Attack-pool construction (R2) — client scenario
-#
-#  Evaluation pool (target nodes, scored under M0 and MR):
-#    - attack-strength members    : retain-client train nodes  (member=1), EXCLUDING F and H
-#    - attack-strength non-members: retain-client test  nodes  (member=0)
-#    - forget set F               : forget-client train nodes  (member=0 under MR)
-#    - held-out reference H        : held-out-client train nodes (member=0)
-#
-#  Fit / calibration pools come from the SHADOW models. We additionally guarantee
-#  that no evaluation global ID (F, H, or attack-strength nodes) appears in the
-#  fit or calibration pools, by excluding those identities.
-# ─────────────────────────────────────────────────────────────────────────────
-def build_eval_pool_client(model, clients, forget_clients, heldout_clients,
+def build_eval_pool_client(model, clients, forget_clients, stage,
                            eval_member_ids=None, eval_nonmember_ids=None):
-    """Return dict with arrays for each evaluation subset, carrying global IDs.
-    `model` is the target being queried (M0 or MR)."""
-    forget_set  = set(forget_clients)
-    heldout_set = set(heldout_clients)
+
+    assert stage in ("M0", "MR")
+    forget_set = set(forget_clients)
+    f_label = 1 if stage == "M0" else 0
 
     rows = {k: dict(probs=[], gid=[], cid=[], cls=[], member=[])
             for k in ("attack_member", "attack_nonmember", "F", "H")}
@@ -116,21 +69,21 @@ def build_eval_pool_client(model, clients, forget_clients, heldout_clients,
         g_tr, g_te = _global_ids(cl, tr), _global_ids(cl, te)
 
         if cid in forget_set:
-            push("F", probs[tr], g_tr, cid, labels[tr], 0)
-        elif cid in heldout_set:
-            push("H", probs[tr], g_tr, cid, labels[tr], 0)
+            # Forgotten client: F = its train nodes, H = its test nodes.
+            push("F", probs[tr], g_tr, cid, labels[tr], f_label)
+            push("H", probs[te], g_te, cid, labels[te], 0)
+            continue   # forgotten client contributes nothing to attack-strength pools
+
+        # Retained client: attack-strength members from the eval-member slice
+        if eval_member_ids is not None:
+            emask = np.array([gg in eval_member_ids for gg in g_tr])
+            if emask.any():
+                push("attack_member", probs[tr][emask], g_tr[emask], cid,
+                     labels[tr][emask], 1)
         else:
-            # only the designated evaluation-member slice becomes attack_member;
-            # the remaining retain-train nodes are reserved for shadow fitting.
-            if eval_member_ids is not None:
-                emask = np.array([gg in eval_member_ids for gg in g_tr])
-                if emask.any():
-                    push("attack_member", probs[tr][emask], g_tr[emask], cid,
-                         labels[tr][emask], 1)
-            else:
-                push("attack_member", probs[tr], g_tr, cid, labels[tr], 1)
-        # only the designated evaluation-nonmember slice becomes attack_nonmember;
-        # the remaining test nodes are reserved for shadow fitting/calibration.
+            push("attack_member", probs[tr], g_tr, cid, labels[tr], 1)
+
+        # Retained client: attack-strength non-members from the eval-nonmember slice
         if eval_nonmember_ids is not None:
             nmask = np.array([gg in eval_nonmember_ids for gg in g_te])
             if nmask.any():
@@ -160,10 +113,7 @@ def build_eval_pool_client(model, clients, forget_clients, heldout_clients,
 # ─────────────────────────────────────────────────────────────────────────────
 def build_shadow_pools(cfg, data, clients, seed, exclude_global_ids,
                        n_shadow=5, shadow_frac=0.5, calib_frac=0.3):
-    """Train shadow models and return (fit, calib) pools of (probs, member, cls),
-    with all rows whose global ID is in `exclude_global_ids` removed. The calib
-    pool is a held-out slice (by identity) of the shadow NON-members.
-    """
+    
     exclude = set(int(g) for g in exclude_global_ids)
     rng = np.random.default_rng(seed + 12345)
     n_clients = len(clients)
@@ -173,6 +123,17 @@ def build_shadow_pools(cfg, data, clients, seed, exclude_global_ids,
     for i in range(n_shadow):
         ids = rng.choice(n_clients, n_use, replace=False).tolist()
         shadow_clients = [copy.deepcopy(clients[j]) for j in ids]
+
+        # Point 4: identity separation BEFORE shadow training. Remove every
+        # evaluation identity (eval members, F, H) from the shadow clients'
+        # supervised train_mask so the shadow models never learn from them.
+        # The nodes remain structurally present in the graph.
+        for cl in shadow_clients:
+            tm = np.asarray(cl["train_mask"]).copy()
+            g_all = np.asarray(cl["node_indices"])
+            drop = np.array([int(g) in exclude for g in g_all])
+            cl["train_mask"] = tm & ~drop
+
         model = make_model(cfg, data)
         model, _ = federated_train(cfg, shadow_clients, model, desc=f"Shadow {i+1}/{n_shadow}")
         for cl in shadow_clients:
@@ -221,119 +182,123 @@ def run_cell(dataset, seed, scenario="client", out_dir="results", n_shadow=5):
     for cid, cl in enumerate(clients):
         cl["id"] = cid
 
-    # 2. Original model M0 (trained on ALL clients)
+    # ── 1. Original model M0 on ALL clients (val-only selection, R1) ──────
     m0 = make_model(cfg, data)
     m0, _ = federated_train(cfg, clients, m0, desc="M0")
 
-    # 3. Forget set F (client-level) and matched held-out H
+    # ── 2. Forget set = whole client(s). H = the SAME client's test nodes ──
     forget_clients = define_forget_set_client(cfg, K, seed)
-    n_forget = len(forget_clients)
-    heldout_clients = define_heldout_client(K, forget_clients, seed, size=n_forget)
+    forget_set = set(forget_clients)
 
-    # 4. Retrained reference MR (retain clients only; forget AND heldout excluded
-    #    from training so H is a genuine never-seen reference)
-    retain_clients = [c for i, c in enumerate(clients)
-                      if i not in set(forget_clients) | set(heldout_clients)]
+    # ── 3. Retrained reference MR on RETAINED clients only (Point 1) ─────
+    #   The forgotten client takes no part in MR training or in MR checkpoint
+    #   selection: it is simply absent from the client list passed in, so the
+    #   selection metric inside federated_train is computed on retained
+    #   clients only.
+    retain_clients = [c for i, c in enumerate(clients) if i not in forget_set]
+    assert all(int(c["id"]) not in forget_set for c in retain_clients), \
+        "forgotten client leaked into MR training/selection set"
     set_seed(seed)
     mr = make_model(cfg, data)
     mr, _ = federated_train(cfg, retain_clients, mr, desc="MR")
 
-    # 5. Designate a disjoint evaluation-member slice of the retain-client train
-    #    nodes (a fraction per retain client). These become attack_member
-    #    evaluation nodes; the remaining retain-train nodes are used for shadow
-    #    fitting, so evaluation and fitting members never overlap (R2).
+    # ── 4. Designate evaluation slices on RETAINED clients (Point 3) ─────
     eval_member_frac = 0.30
-    rng_em = np.random.default_rng(seed + 999)
-    forget_set  = set(forget_clients)
-    heldout_set = set(heldout_clients)
     eval_nonmember_frac = 0.30
-    eval_member_ids = set()
-    eval_nonmember_ids = set()
+    rng_em = np.random.default_rng(seed + 999)
+    eval_member_ids, eval_nonmember_ids = set(), set()
     for cid, cl in enumerate(clients):
-        # evaluation MEMBERS come from retain clients' train nodes
-        if cid not in forget_set and cid not in heldout_set:
-            tr = np.where(np.asarray(cl["train_mask"]))[0]
-            g_tr = _global_ids(cl, tr)
-            if len(g_tr) > 0:
-                k = max(1, int(round(eval_member_frac * len(g_tr))))
-                chosen = rng_em.choice(g_tr, size=min(k, len(g_tr)), replace=False)
-                eval_member_ids.update(int(x) for x in chosen)
-        # evaluation NON-MEMBERS come from every client's test nodes
+        if cid in forget_set:
+            continue
+        tr = np.where(np.asarray(cl["train_mask"]))[0]
+        g_tr = _global_ids(cl, tr)
+        if len(g_tr) > 0:
+            k = max(1, int(round(eval_member_frac * len(g_tr))))
+            eval_member_ids.update(int(x) for x in
+                                   rng_em.choice(g_tr, size=min(k, len(g_tr)), replace=False))
         te = np.where(np.asarray(cl["test_mask"]))[0]
         g_te = _global_ids(cl, te)
         if len(g_te) > 0:
             k = max(1, int(round(eval_nonmember_frac * len(g_te))))
-            chosen = rng_em.choice(g_te, size=min(k, len(g_te)), replace=False)
-            eval_nonmember_ids.update(int(x) for x in chosen)
+            eval_nonmember_ids.update(int(x) for x in
+                                      rng_em.choice(g_te, size=min(k, len(g_te)), replace=False))
 
-    # Evaluation pools under MR, using only the designated eval-member slice.
-    eval_mr = build_eval_pool_client(mr, clients, forget_clients, heldout_clients,
-                                     eval_member_ids=eval_member_ids,
-                                     eval_nonmember_ids=eval_nonmember_ids)
-    eval_ids = np.concatenate([eval_mr[k]["gid"] for k in eval_mr if len(eval_mr[k]["gid"])])
+    # F and H global IDs (forgotten client's train / test nodes)
+    F_ids, H_ids = set(), set()
+    for cid in forget_set:
+        cl = clients[cid]
+        F_ids.update(int(x) for x in _global_ids(cl, np.where(np.asarray(cl["train_mask"]))[0]))
+        H_ids.update(int(x) for x in _global_ids(cl, np.where(np.asarray(cl["test_mask"]))[0]))
 
-    # Shadow fit + calibration pools, excluding all evaluation identities
-    # (F, H, and the designated evaluation members) so shadows never fit on them.
+    # ── 5. Shadow fit/calib pools; ALL evaluation identities removed from the
+    #      shadow train masks BEFORE training (Point 4) ─────────────────────
+    eval_ids_all = eval_member_ids | eval_nonmember_ids | F_ids | H_ids
     fit, cal = build_shadow_pools(cfg, data, retain_clients, seed,
-                                  exclude_global_ids=eval_ids, n_shadow=n_shadow)
+                                  exclude_global_ids=eval_ids_all, n_shadow=n_shadow)
+    assert_pools_disjoint(fit["gid"], cal["gid"], list(eval_ids_all))
 
-    # Disjointness assertion (R2)
-    assert_pools_disjoint(fit["gid"], cal["gid"], eval_ids)
-
-    # 6. Fit attack on fit pool; calibrate threshold at alpha on calib pool; freeze
+    # ── 6. Fit + calibrate ONCE, then freeze (R3/R4, Point 5) ───────────
     shokri = ShokriShadowMIA(alpha=ALPHA)
     shokri.fit(fit["probs"], fit["member"], fit["cls"],
                calib_probs=cal["probs"], calib_member=cal["member"], calib_cls=cal["cls"])
 
-    # 7. Apply frozen attack to M0 and MR, log per node
+    # ── 7. Evaluation pools per stage (stage-aware labels) and scoring ──
+    eval_m0 = build_eval_pool_client(m0, clients, forget_clients, "M0",
+                                     eval_member_ids, eval_nonmember_ids)
+    eval_mr = build_eval_pool_client(mr, clients, forget_clients, "MR",
+                                     eval_member_ids, eval_nonmember_ids)
+
     logger = NodeLogger()
-    eval_m0 = build_eval_pool_client(m0, clients, forget_clients, heldout_clients,
-                                    eval_member_ids=eval_member_ids,
-                                    eval_nonmember_ids=eval_nonmember_ids)
 
     def score_and_log(eval_pool, stage):
         for subset in ("attack_member", "attack_nonmember", "F", "H"):
             e = eval_pool[subset]
             if len(e["probs"]) == 0:
                 continue
-            pred, score, thr = shokri.predict(e["probs"], e["cls"])
+            pred, score, thr, fb = shokri.predict(e["probs"], e["cls"])
             for k in range(len(e["probs"])):
                 logger.add(dataset=dataset, scenario=scenario, seed=seed,
                            global_node_id=e["gid"][k], client_id=e["cid"][k],
                            stage=stage, subset=subset, pool_role="evaluation",
                            true_class=e["cls"][k], membership_label=e["member"][k],
                            mia_score=score[k], decision=pred[k],
-                           threshold=thr[k] if hasattr(thr, "__len__") else thr,
-                           fallback_status=shokri.fallback_used.get(int(e["cls"][k]), False),
+                           threshold=thr[k], fallback_status=bool(fb[k]),
                            prob_vector=e["probs"][k])
 
     score_and_log(eval_m0, "M0")
     score_and_log(eval_mr, "MR")
 
-    # 8. Transition endpoints (Section 3), from the logged rows
+    # ── 8. Endpoints from the logged rows ───────────────────────────────
     df = logger.to_frame()
     def rate(stage, subset):
-        s = df[(df.stage == stage) & (df.subset == subset)]
-        return float(s.decision.mean()) if len(s) else float("nan")
+        s_ = df[(df.stage == stage) & (df.subset == subset)]
+        return float(s_.decision.mean()) if len(s_) else float("nan")
     def meanscore(stage, subset):
-        s = df[(df.stage == stage) & (df.subset == subset)]
-        return float(s.mia_score.mean()) if len(s) else float("nan")
+        s_ = df[(df.stage == stage) & (df.subset == subset)]
+        return float(s_.mia_score.mean()) if len(s_) else float("nan")
 
-    fpr_H_MR = rate("MR", "H")           # FPR on known non-members under MR
+    fpr_H_MR = rate("MR", "H")
     fpr_F_MR = rate("MR", "F")
     C_cal = fpr_H_MR - ALPHA
     C_F   = fpr_F_MR - fpr_H_MR
 
-    # Corrected generalization gap on MR (R5)
-    acc_tr, acc_te, gap = generalization_gap(mr, retain_clients, "client", None)
-
-    # attack strength (AUC) on the clean member/non-member evaluation set (C1)
+    # Clean attack strength on RETAINED-client member/nonmember pool under MR:
+    # AUC, plus TPR/FPR at the fixed operating point (alpha).
     clean = df[df.subset.isin(["attack_member", "attack_nonmember"]) & (df.stage == "MR")]
     from sklearn.metrics import roc_auc_score
     try:
         auc_strength = float(roc_auc_score(clean.membership_label, clean.mia_score))
     except ValueError:
         auc_strength = float("nan")
+    mem = clean[clean.membership_label == 1]
+    non = clean[clean.membership_label == 0]
+    tpr_alpha = float(mem.decision.mean()) if len(mem) else float("nan")
+    fpr_alpha = float(non.decision.mean()) if len(non) else float("nan")
+
+    # Corrected generalization gap on MR over RETAINED clients (R5)
+    acc_tr, acc_te, gap = generalization_gap(mr, retain_clients, "client", None)
+
+    n_fallback_classes = int(sum(1 for v in shokri.fallback_used.values() if v))
 
     summary = dict(
         dataset=dataset, scenario=scenario, seed=seed,
@@ -344,27 +309,32 @@ def run_cell(dataset, seed, scenario="client", out_dir="results", n_shadow=5):
         heldout_member_rate_MR=fpr_H_MR,
         C_cal=C_cal, C_F=C_F,
         attack_strength_auc=auc_strength,
+        attack_tpr_at_alpha=tpr_alpha,
+        attack_fpr_at_alpha=fpr_alpha,
         acc_train=acc_tr, acc_test=acc_te, train_test_gap=gap,
         alpha=ALPHA,
+        n_fallback_classes=n_fallback_classes,
     )
 
-    # Write per-node log + manifest
     out = Path(out_dir) / "raw"
     tag = f"{dataset}_{scenario}_s{seed}"
     logger.save(out / f"nodelog_{tag}.csv")
     write_manifest(out / f"manifest_{tag}.json",
                    dataset=dataset, scenario=scenario, seed=seed, config=cfg,
-                   removed_client_ids=list(forget_clients) + list(heldout_clients),
-                   forget_global_ids=eval_mr["F"]["gid"].tolist(),
-                   heldout_global_ids=eval_mr["H"]["gid"].tolist(),
-                   alpha=ALPHA, thresholds=shokri.class_thresholds,
+                   removed_client_ids=list(forget_clients),
+                   forget_global_ids=sorted(F_ids),
+                   heldout_global_ids=sorted(H_ids),
+                   alpha=ALPHA,
+                   thresholds={str(k): float(v) for k, v in shokri.class_thresholds.items()},
                    commit_hash=get_commit_hash(),
                    split_ratios=DATASET_SPLIT_RATIOS.get(dataset, (0.20, 0.40, 0.40)),
                    counts=dict(n_forget_clients=len(forget_clients),
-                               n_heldout_clients=len(heldout_clients)),
+                               n_retain_clients=len(retain_clients),
+                               fallback_classes=[int(c) for c, v in shokri.fallback_used.items() if v],
+                               calib_support={str(k): int(v) for k, v in shokri.calib_support.items()}),
                    fit_global_ids=fit["gid"].tolist(),
                    calib_global_ids=cal["gid"].tolist(),
-                   eval_global_ids=[int(x) for x in eval_ids])
+                   eval_global_ids=sorted(eval_ids_all))
     return summary
 
 
