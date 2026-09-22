@@ -1,20 +1,3 @@
-"""Shokri shadow-model membership inference, with the corrected evaluation
-protocol.
-
-Protocol requirements implemented here:
-  R2  Identity-disjoint pools. The attack is FIT on shadow member/non-member
-      outputs and CALIBRATED on a held-out slice of shadow non-members. The
-      caller must guarantee that the global node identities of the final
-      evaluation nodes (the forget set F, the held-out reference H, and the
-      clean attack-strength member/non-member set) are NOT present in the fit or
-      calibration pools. `assert_pools_disjoint` checks this from global IDs.
-  R3  Out-of-sample threshold at a fixed operating point (alpha = 0.10),
-      calibrated on the calibration pool and then FROZEN. `fallback_used` is
-      recorded when the target FPR cannot be achieved.
-  R4  The frozen attacker is applied unchanged to M0 and MR.
-
-The attack summary AUC is attack strength only; it is not a forgetting measure.
-"""
 import numpy as np
 import torch
 import torch.nn as nn
@@ -190,11 +173,23 @@ class ShokriShadowMIA:
             n_classes:      int | None = None,
             calib_probs:    np.ndarray | None = None,   # separate calibration pool
             calib_member:   np.ndarray | None = None,
-            calib_cls:      np.ndarray | None = None) -> "ShokriShadowMIA":
-        """Fit per-class attack models on the FIT pool, then calibrate each
-        class's decision threshold at the fixed operating point (alpha) on the
-        CALIBRATION pool (out-of-sample non-members, R3). If no calibration pool
-        is given, falls back to in-sample calibration (not recommended)."""
+            calib_cls:      np.ndarray | None = None,
+            min_calib:      int = 10) -> "ShokriShadowMIA":
+        """Fit the attack.
+
+        Policy (Point 5):
+          * ALWAYS train a pooled fallback attack on all classes together, and
+            calibrate its threshold at alpha on the pooled calibration
+            non-members.
+          * For each class: if it has enough fit data AND enough calibration
+            non-members (>= min_calib), fit a class-specific attack and
+            calibrate its own threshold at alpha on that class's calibration
+            non-members. Otherwise the class is routed to the POOLED attack
+            together with the POOLED threshold, and this is recorded in
+            fallback_used[c] = True.
+        The class-specific attack is never given a pooled threshold, and a
+        sparse class is never left on an uncalibrated class-specific attack.
+        """
         self.n_in = shadow_probs.shape[1]
         if n_classes is None:
             mx = int(shadow_classes.max()) if len(shadow_classes) else 0
@@ -204,87 +199,95 @@ class ShokriShadowMIA:
 
         use_oos = (calib_probs is not None and calib_member is not None
                    and calib_cls is not None and len(calib_cls) > 0)
+        if not use_oos:
+            raise ValueError("A separate calibration pool is required (Point 5).")
 
+        # ── Pooled fallback attack: always trained, always calibrated ─────
+        self.fallback_model = _train_attack_clf(shadow_probs, shadow_member, **self.cfg)
+        fneg = calib_probs[calib_member == 0]
+        fneg_scores = _score_attack_clf(self.fallback_model, fneg) if len(fneg) else np.array([])
+        self.fallback_threshold = _threshold_at_fpr(fneg_scores, self.alpha)
+        self.fallback_calib_n = int(len(fneg))
+
+        # ── Per-class attacks, only where fit + calibration support exists ─
+        self.class_models = {}
+        self.class_thresholds = {}
+        self.fallback_used = {}
+        self.calib_support = {}
         for c in range(n_classes):
             sel = shadow_classes == c
             n_c = int(sel.sum())
             uniq = np.unique(shadow_member[sel]) if n_c > 0 else np.array([])
-            if n_c < 10 or len(uniq) < 2:
+            cneg = calib_probs[(calib_cls == c) & (calib_member == 0)]
+            n_cal = int(len(cneg))
+            self.calib_support[c] = n_cal
+
+            enough_fit   = (n_c >= 10 and len(uniq) >= 2)
+            enough_calib = (n_cal >= min_calib)
+
+            if enough_fit and enough_calib:
+                model = _train_attack_clf(shadow_probs[sel], shadow_member[sel], **self.cfg)
+                neg_scores = _score_attack_clf(model, cneg)
+                self.class_models[c] = model
+                self.class_thresholds[c] = _threshold_at_fpr(neg_scores, self.alpha)
+                self.fallback_used[c] = False
+            else:
+                # Route this class to the pooled attack + pooled threshold.
                 self.class_models[c] = None
-                continue
-            model = _train_attack_clf(shadow_probs[sel], shadow_member[sel], **self.cfg)
-            self.class_models[c] = model
-
-            # Calibrate threshold at alpha on OUT-OF-SAMPLE non-members (R3).
-            if use_oos:
-                cneg = calib_probs[(calib_cls == c) & (calib_member == 0)]
-            else:
-                cneg = shadow_probs[sel][shadow_member[sel] == 0]
-            neg_scores = _score_attack_clf(model, cneg) if len(cneg) else np.array([])
-            thr = _threshold_at_fpr(neg_scores, self.alpha)
-            self.class_thresholds[c] = thr
-            self.fallback_used[c] = False
-
-        # Fallback model for sparse classes, calibrated on OOS non-members too.
-        if any(m is None for m in self.class_models.values()):
-            self.fallback_model = _train_attack_clf(shadow_probs, shadow_member, **self.cfg)
-            if use_oos:
-                fneg = calib_probs[calib_member == 0]
-            else:
-                fneg = shadow_probs[shadow_member == 0]
-            fneg_scores = _score_attack_clf(self.fallback_model, fneg) if len(fneg) else np.array([])
-            self.fallback_threshold = _threshold_at_fpr(fneg_scores, self.alpha)
-            for c in range(n_classes):
-                if self.class_models.get(c) is None:
-                    self.fallback_used[c] = True
+                self.class_thresholds[c] = self.fallback_threshold
+                self.fallback_used[c] = True
         return self
 
     # ── Apply to target data ──────────────────────────────────────────────
     def predict(self,
                 query_probs:   np.ndarray,
                 query_classes: np.ndarray):
-        """For each query node, apply its class's attack model.
+        """Score query nodes with the frozen attack.
 
-        Membership is decided by comparing the member-score against the
-        class's calibrated threshold (Fix 2), not by argmax-at-0.5.
+        A class that was routed to the fallback at fit time is scored with the
+        POOLED attack and the POOLED threshold; otherwise with its own attack
+        and its own threshold. Nothing is recalibrated here (R4).
 
         Returns
         -------
-        pred           : (N,) int   predicted membership ∈ {0, 1}
+        pred           : (N,) int   predicted membership in {0, 1}
         member_score   : (N,) float member probability
         thr_used       : (N,) float threshold applied to each node
+        fb_used        : (N,) bool  True where the pooled fallback attack was used
         """
         N = len(query_probs)
-        pred          = np.zeros(N, dtype=int)
-        member_score  = np.full(N, 0.5, dtype=float)
-        thr_used      = np.full(N, 0.5, dtype=float)
+        pred         = np.zeros(N, dtype=int)
+        member_score = np.full(N, 0.5, dtype=float)
+        thr_used     = np.full(N, self.fallback_threshold, dtype=float)
+        fb_used      = np.zeros(N, dtype=bool)
 
+        seen = np.zeros(N, dtype=bool)
         for c, model in self.class_models.items():
             sel = query_classes == c
             if not sel.any():
                 continue
-            if model is None:
-                if self.fallback_model is None:
-                    continue
-                s   = _score_attack_clf(self.fallback_model, query_probs[sel])
-                thr = self.fallback_threshold
-                used_fallback[sel] = True
+            seen |= sel
+            if model is None or self.fallback_used.get(c, False):
+                s_   = _score_attack_clf(self.fallback_model, query_probs[sel])
+                thr  = self.fallback_threshold
+                fb_used[sel] = True
             else:
-                s   = _score_attack_clf(model, query_probs[sel])
-                thr = self.class_thresholds.get(c, 0.5)
-            member_score[sel] = s
-            thr_used[sel] = thr
-            pred[sel] = (s > thr).astype(int)
+                s_   = _score_attack_clf(model, query_probs[sel])
+                thr  = self.class_thresholds[c]
+            member_score[sel] = s_
+            thr_used[sel]     = thr
+            pred[sel]         = (s_ > thr).astype(int)
 
-        # Cover query classes never seen in shadow data (shouldn't happen often)
-        unseen = ~np.isin(query_classes, list(self.class_models.keys()))
-        if unseen.any() and self.fallback_model is not None:
-            s = _score_attack_clf(self.fallback_model, query_probs[unseen])
-            member_score[unseen] = s
-            thr_used[unseen] = self.fallback_threshold
-            pred[unseen] = (s > self.fallback_threshold).astype(int)
+        # Query classes never seen at fit time -> pooled fallback, recorded.
+        unseen = ~seen
+        if unseen.any():
+            s_ = _score_attack_clf(self.fallback_model, query_probs[unseen])
+            member_score[unseen] = s_
+            thr_used[unseen]     = self.fallback_threshold
+            pred[unseen]         = (s_ > self.fallback_threshold).astype(int)
+            fb_used[unseen]      = True
 
-        return pred, member_score, thr_used
+        return pred, member_score, thr_used, fb_used
 
 
 def compute_detailed_mia_metrics(
