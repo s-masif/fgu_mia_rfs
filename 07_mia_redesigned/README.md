@@ -1,17 +1,42 @@
 # Is Membership Inference a Reliable Check for Unlearning in Federated Graphs?
 
-This repository studies whether a **membership inference attack (MIA)** can be
-used to verify unlearning in **federated graph learning**. Rather than attacking
-an unlearned model, we apply the attack to the **retrain-from-scratch model**
-(`MR`) — the model trained without the forgotten data, which is the reference for
-"perfect" forgetting — and ask whether the attack behaves as a faithful measure
-of forgetting.
+This folder contains the corrected pipeline for studying whether a **membership
+inference attack (MIA)** can verify unlearning in **federated graph learning**.
+Rather than attacking an unlearned model, we apply the attack to the
+**retrain-from-scratch model** (`MR`) — the model trained without the forgotten
+data, which is the reference for "perfect" forgetting — and ask whether the
+attack behaves as a faithful measure of forgetting.
 
 The central idea is the **membership transition of the forget set**. The same
 forget nodes are members of the original model `M0` and supervised non-members of
 the retrained model `MR`. One frozen attack scores those nodes under both models,
 and we check whether the attack tracks that known change, and whether its output
 stays meaningful when compared against a matched supervised non-member reference.
+
+---
+
+## Files (flat layout)
+
+```
+07_mia_redesigned/
+├── models.py            GNN model, dataset loaders, per-dataset config,
+│                        get_metrics (validation-only), CORE_DATASETS / CORE_SEEDS
+├── partition.py         graph partitioning across clients + train/val/test split
+├── train.py             federated training and the retrain-from-scratch models
+├── attack.py            Shokri shadow-model MIA, out-of-sample calibration at α,
+│                        pooled-fallback attack for sparse classes
+├── metrics.py           corrected train/test generalization gap
+├── nodelog.py           per-node logging (18 columns) + run manifest
+├── experiment_main.py   client-level experiment runner
+├── test_acceptance.py   integrity checks (PASS/FAIL) + diagnostics (reported)
+├── requirements.txt
+├── .gitignore
+└── README.md
+```
+
+All modules import each other as flat siblings (e.g. `experiment_main.py` does
+`from models import ...`, `from attack import ...`), so run scripts from inside
+this folder.
 
 ---
 
@@ -41,30 +66,27 @@ stays meaningful when compared against a matched supervised non-member reference
   predicted as members before and after retraining. Expected to drop after
   retraining.
 - **`C_cal = FPR(H; MR) − α`** — how far the decision threshold drifts on the
-  forgotten client (a transportability diagnostic). Near 0 = the threshold
-  transfers well.
+  forgotten client (a transportability diagnostic). Near 0 = transfers well.
 - **`C_F = FPR(F; MR) − FPR(H; MR)`** — how much the forget set stands out
-  compared to the matched reference. `C_F ≈ 0` = the forget set looks like a
-  normal non-member; `C_F > 0` = still member-like after removal.
+  compared to the matched reference. `C_F ≈ 0` = looks like a normal non-member;
+  `C_F > 0` = still member-like after removal.
 - **Attack strength** — AUC (plus TPR/FPR at α) on the retained-client
   member/non-member pool. Reported as attack strength only, not as a forgetting
   measure.
 
 ---
 
-## Design decisions (why the numbers mean what they mean)
+## Design decisions
 
 - **Transductive setting.** Each client trains on the full local adjacency (all
-  nodes participate in message passing) and the loss is masked to training nodes.
-  A node removed from the loss can still influence the model through message
-  passing, so membership is defined at the level of the **training loss**, kept
-  distinct from structural presence.
+  nodes participate in message passing); the loss is masked to training nodes.
+  Membership is defined at the level of the **training loss**, kept distinct from
+  structural presence in the graph.
 - **Client-level forgetting.** The forget set is a whole client. `MR` excludes
   only that client; the forgotten client is used only after `MR` is trained, to
   score `F` and `H`.
-- **`H` is the forgotten client's test nodes.** `F` (its train nodes) and `H`
-  (its test nodes) come from the same client, so `H` is a matched supervised
-  non-member reference for `F`. A number on `F` is read relative to `H`.
+- **`H` is the forgotten client's test nodes** — a matched supervised non-member
+  reference for `F` (its train nodes). A number on `F` is read relative to `H`.
 - **One frozen attack for both models.** Fit and calibrated once, applied
   unchanged to `M0` and `MR`.
 - **Identity-disjoint pools.** Within each retained client, a 30% slice of the
@@ -72,8 +94,8 @@ stays meaningful when compared against a matched supervised non-member reference
   and calibrate the attack. `F`, `H`, and all evaluation nodes are removed from
   the shadow training masks **before** the shadow models are trained.
 - **Fixed operating point with out-of-sample calibration.** The threshold is set
-  at α = 0.10 on a separate calibration pool, then frozen. ~10% predicted-members
-  on genuine non-members is expected, so `F` is always read against `H`.
+  at α = 0.10 on a separate calibration pool, then frozen. `F` is always read
+  against `H`.
 - **Corrected generalization gap.** `acc_train(MR) − acc_test(MR)`, with training
   accuracy on the retained training nodes (forget nodes excluded) and test
   accuracy on the untouched test nodes.
@@ -82,16 +104,13 @@ stays meaningful when compared against a matched supervised non-member reference
 
 ## Changes in this version (review corrections)
 
-Seven corrections from review, plus two extra diagnostic columns:
-
 1. **H and MR isolation.** `MR` excludes only the forgotten client. `H` is that
    client's test nodes. Labels are stage-aware: `F` is a member under `M0` and a
    non-member under `MR`; `H` is a non-member under both.
-2. **Validation-only model selection.** Checkpoint selection uses validation
-   nodes only; a client with no validation nodes is skipped. Test is never used
-   during training or selection.
+2. **Validation-only model selection.** A client with no validation nodes is
+   skipped; the test set is never used during training or selection.
 3. **Attack pool from retained clients only.** The forgotten client's test nodes
-   belong to `H` only, never to the attack pool.
+   belong to `H` only.
 4. **Identity separation before shadow training.** Evaluation nodes (`F`, `H`,
    the evaluation slice) are removed from the shadow training masks before
    training; the nodes remain in the graph.
@@ -115,35 +134,10 @@ structural or difficulty-related, without a rerun):
 
 **Known open point (interpretation, not a bug).** The threshold is calibrated on
 the retained clients but applied to `F`/`H` in the forgotten client. When the
-forgotten client's score distribution differs from the retained ones,
-the threshold may not transfer, and `C_cal` can be far from 0 on some datasets.
-`C_F` remains a valid relative comparison (`F` and `H` are scored under the same
-threshold on the same client); `C_cal` is reported as the transportability
+forgotten client's score distribution differs from the retained ones, the
+threshold may not transfer, and `C_cal` can be far from 0 on some datasets. `C_F`
+remains a valid relative comparison; `C_cal` is reported as the transportability
 diagnostic.
-
----
-
-## Repository structure
-
-```
-mia-unlearning/
-├── src/
-│   ├── core/
-│   │   ├── models.py      GNN model, dataset loaders, per-dataset config,
-│   │   │                  get_metrics (validation-only), CORE_DATASETS/CORE_SEEDS
-│   │   ├── partition.py   graph partitioning across clients + train/val/test split
-│   │   ├── train.py       federated training and the retrain-from-scratch models
-│   │   ├── attack.py      Shokri shadow-model MIA, out-of-sample calibration at α,
-│   │   │                  pooled-fallback attack for sparse classes
-│   │   ├── metrics.py     corrected train/test generalization gap
-│   │   └── nodelog.py     per-node logging (18 columns) + run manifest
-│   └── experiment_main.py client-level experiment runner
-├── analysis/
-│   └── test_acceptance.py integrity checks (PASS/FAIL) + diagnostics (reported)
-├── requirements.txt
-├── .gitignore
-└── README.md
-```
 
 ---
 
@@ -167,7 +161,6 @@ are used to avoid duplicated-node leakage.
 One dataset, one seed:
 
 ```bash
-cd src
 python experiment_main.py --datasets Cora --seeds 42 --scenario client --out-dir results
 ```
 
@@ -178,10 +171,8 @@ python experiment_main.py --core --scenario client --out-dir results
 ```
 
 Runs accumulate into `results/summary_core.csv`; a cell already present is
-skipped, and `--overwrite` forces a re-run.
-
-The frozen core set is defined in `src/core/models.py` as `CORE_DATASETS`
-(13 datasets) and `CORE_SEEDS` (5 seeds).
+skipped, and `--overwrite` forces a re-run. The frozen core set is defined in
+`models.py` as `CORE_DATASETS` (13) and `CORE_SEEDS` (5).
 
 ---
 
@@ -210,8 +201,7 @@ Under `--out-dir` (default `results/`):
 ## Checking a run
 
 ```bash
-cd analysis
-python test_acceptance.py --dir ../src/results
+python test_acceptance.py --dir results
 ```
 
 PASS/FAIL (implementation integrity): 18-column schema; no NaN scores;
@@ -230,11 +220,10 @@ fallback usage; and F/H structural summaries (`local_degree`,
 ## Notes
 
 - The 30% evaluation / 70% fit split and `min_calib = 10` are implementation
-  choices to keep all pools non-empty and reliable; both are adjustable in
-  `experiment_main.py` and `core/attack.py`.
+  choices to keep all pools non-empty and reliable; adjustable in
+  `experiment_main.py` and `attack.py`.
 - A cell whose forgotten client has too few test nodes will produce an empty `H`
-  and therefore NaN `C_cal`/`C_F`; the acceptance suite flags this (its "four
-  subsets non-empty" check), and such cells should be noted rather than treated
-  as results.
+  and therefore NaN `C_cal`/`C_F`; the acceptance suite flags this, and such
+  cells should be noted rather than treated as results.
 - Node-level forgetting, additional attacks, and sensitivity sweeps are out of
   scope for this client-level core.
