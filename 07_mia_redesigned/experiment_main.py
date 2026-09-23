@@ -456,7 +456,8 @@ def run_cell(dataset, seed, scenario="client", out_dir="results", n_shadow=5):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--datasets", nargs="+", required=True)
+    ap.add_argument("--datasets", nargs="+", default=None,
+                    help="Datasets to run. Omit if using --core.")
     ap.add_argument("--seeds", nargs="+", type=int, default=[7])
     ap.add_argument("--scenario", default="client")
     ap.add_argument("--out-dir", default="results")
@@ -471,6 +472,8 @@ def main():
         args.seeds = CORE_SEEDS
         print(f"Core set: {len(CORE_DATASETS)} datasets x {len(CORE_SEEDS)} seeds = "
               f"{len(CORE_DATASETS)*len(CORE_SEEDS)} cells")
+    if not args.datasets:
+        ap.error("provide --datasets ... or use --core")
 
     import pandas as pd
     summary_path = Path(args.out_dir) / "summary_core.csv"
