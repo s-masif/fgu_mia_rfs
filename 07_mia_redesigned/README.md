@@ -15,6 +15,12 @@ stays meaningful when compared against a matched supervised non-member reference
 
 ---
 
+git status                          # see what changed
+git add 07_mia_redesigned/          # stage only your code folder (not stray files)
+git status                          # confirm what's staged
+git commit -m "what you changed"
+git push
+
 ## Files (flat layout)
 
 ```

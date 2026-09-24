@@ -70,18 +70,18 @@ def _global_ids(cl, local_idx):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Held-out reference H (client-level): a whole retain client set aside as a
-#  matched supervised non-member, matched non-member reference. It is excluded from MR training and
-#  from the attack fit/calibration pools, and used only as a reference under MR.
+#  Held-out reference H (client-level): the forgotten client's TEST nodes, used
+#  as the matched supervised non-member reference. Like F, H is never in the
+#  attack fit/calibration pools; it is scored only as a reference under M0/MR.
 # ─────────────────────────────────────────────────────────────────────────────
 # ─────────────────────────────────────────────────────────────────────────────
 #  Attack-pool construction (R2) — client scenario
 #
 #  Evaluation pool (target nodes, scored under M0 and MR):
-#    - attack-strength members    : retain-client train nodes  (member=1), EXCLUDING F and H
-#    - attack-strength non-members: retain-client test  nodes  (member=0)
-#    - forget set F               : forget-client train nodes  (member=0 under MR)
-#    - held-out reference H        : held-out-client train nodes (member=0)
+#    - attack-strength members    : retained-client train nodes (member=1)
+#    - attack-strength non-members: retained-client test  nodes (member=0)
+#    - forget set F               : forgotten-client TRAIN nodes (member=1 @M0, 0 @MR)
+#    - held-out reference H       : forgotten-client TEST  nodes (member=0 both)
 #
 #  Fit / calibration pools come from the SHADOW models. We additionally guarantee
 #  that no evaluation global ID (F, H, or attack-strength nodes) appears in the
