@@ -230,5 +230,3 @@ def apply_per_client_split(clients: list, dataset_name: str,
         test_mask  = np.zeros(n, dtype=bool); test_mask[perm[t2:]]    = True
         cl["train_mask"], cl["val_mask"], cl["test_mask"] = train_mask, val_mask, test_mask
     return clients
-
-

@@ -29,7 +29,7 @@ import numpy as np
 import torch
 
 import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent / "core"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from models import (PlainGCN, DATASET_CONFIGS, DATASET_SPLIT_RATIOS,
                     CORE_DATASETS, CORE_SEEDS,
