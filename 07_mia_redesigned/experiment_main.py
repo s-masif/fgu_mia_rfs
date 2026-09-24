@@ -288,7 +288,11 @@ def run_cell(dataset, seed, scenario="client", out_dir="results", n_shadow=5):
     m0, _ = federated_train(cfg, clients, m0, desc="M0")
 
     # ── 2. Forget set = whole client(s). H = the SAME client's test nodes ──
-    forget_clients = define_forget_set_client(cfg, K, seed)
+    # Louvain may not produce exactly K clients, so use the ACTUAL count.
+    n_clients_actual = len(clients)
+    forget_clients = define_forget_set_client(cfg, n_clients_actual, seed)
+    assert all(0 <= c < n_clients_actual for c in forget_clients), \
+        f"forget client index out of range: {forget_clients} vs {n_clients_actual} clients"
     forget_set = set(forget_clients)
 
     # ── 3. Retrained reference MR on RETAINED clients only (Point 1) ─────
@@ -438,6 +442,8 @@ def run_cell(dataset, seed, scenario="client", out_dir="results", n_shadow=5):
                    split_ratios=DATASET_SPLIT_RATIOS.get(dataset, (0.20, 0.40, 0.40)),
                    counts=dict(n_forget_clients=len(forget_clients),
                                n_retain_clients=len(retain_clients),
+                               n_clients_configured=K,
+                               n_clients_realized=n_clients_actual,
                                fallback_classes=[int(c) for c, v in shokri.fallback_used.items() if v],
                                calib_support={str(k): int(v) for k, v in shokri.calib_support.items()}),
                    attack_settings=dict(
@@ -456,7 +462,8 @@ def run_cell(dataset, seed, scenario="client", out_dir="results", n_shadow=5):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--datasets", nargs="+", required=True)
+    ap.add_argument("--datasets", nargs="+", default=None,
+                    help="Datasets to run. Omit if using --core.")
     ap.add_argument("--seeds", nargs="+", type=int, default=[7])
     ap.add_argument("--scenario", default="client")
     ap.add_argument("--out-dir", default="results")
@@ -471,6 +478,8 @@ def main():
         args.seeds = CORE_SEEDS
         print(f"Core set: {len(CORE_DATASETS)} datasets x {len(CORE_SEEDS)} seeds = "
               f"{len(CORE_DATASETS)*len(CORE_SEEDS)} cells")
+    if not args.datasets:
+        ap.error("provide --datasets ... or use --core")
 
     import pandas as pd
     summary_path = Path(args.out_dir) / "summary_core.csv"
