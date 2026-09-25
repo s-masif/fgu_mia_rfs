@@ -1,0 +1,9 @@
+,attack_strength_auc,C_cal,C_F,train_test_gap,forget_member_rate_M0,forget_member_rate_MR,heldout_member_rate_M0,heldout_member_rate_MR
+attack_strength_auc,1.0,0.117,0.096,0.603,0.314,0.112,0.069,0.117
+C_cal,0.117,1.0,0.022,-0.065,0.52,0.92,0.561,1.0
+C_F,0.096,0.022,1.0,-0.094,0.094,0.308,-0.036,0.022
+train_test_gap,0.603,-0.065,-0.094,1.0,0.196,-0.183,-0.016,-0.065
+forget_member_rate_M0,0.314,0.52,0.094,0.196,1.0,0.46,0.868,0.52
+forget_member_rate_MR,0.112,0.92,0.308,-0.183,0.46,1.0,0.48,0.92
+heldout_member_rate_M0,0.069,0.561,-0.036,-0.016,0.868,0.48,1.0,0.561
+heldout_member_rate_MR,0.117,1.0,0.022,-0.065,0.52,0.92,0.561,1.0

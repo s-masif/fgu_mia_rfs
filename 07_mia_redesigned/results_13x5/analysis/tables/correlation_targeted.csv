@@ -1,0 +1,5 @@
+pair,pearson_r,p,ci95,spearman_rho
+train_test_gap ~ attack_strength_auc,0.393,0.0012,"[+0.07,+0.77]",0.603
+train_test_gap ~ C_F,-0.269,0.0301,"[-0.57,+0.13]",-0.094
+heldout_member_rate_M0 ~ heldout_member_rate_MR,0.318,0.0098,"[+0.11,+0.58]",0.561
+attack_strength_auc ~ C_cal,-0.028,0.8242,"[-0.21,+0.18]",0.117
