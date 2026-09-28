@@ -270,8 +270,8 @@ defined on it.
   final-eval pool can be small (e.g. ~20 nodes on Chameleon), so per-cell AUC/threshold
   there are noisier; report the per-cell sizes.
 
-## Extending to all cells
+<!-- ## Extending to all cells
 
 After the Cora seed 42 check is approved, run the two stages across all 13 datasets
 × 5 seeds. Stage 1 trains 5 reference models per cell (the only training; M0/MR stay
-frozen); Stage 2 scores offline. The test suite should be run per cell.
+frozen); Stage 2 scores offline. The test suite should be run per cell. -->
