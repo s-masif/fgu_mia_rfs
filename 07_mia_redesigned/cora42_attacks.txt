@@ -1,0 +1,22 @@
+=== Cora_client_s42 : MATCH against frozen outputs ===
+  F                refpack=110 frozen=110  match=True
+  H                refpack=222 frozen=222  match=True
+  attack_member    refpack=128 frozen=128  match=True
+  attack_nonmember refpack=259 frozen=259  match=True
+  node-identity match: ALL MATCH ✓
+
+MODIFIED ENTROPY
+  common-pool AUC(MR)=0.658  F:M0=0.509->MR=0.027  H:M0=0.356->MR=0.018
+  C_cal=-0.082  C_F=+0.009  fallback_classes=[2]
+
+OFFLINE RMIA
+  common-pool AUC(MR)=0.622  F:M0=0.800->MR=0.100  H:M0=0.766->MR=0.081
+  C_cal=-0.019  C_F=+0.019
+
+CROSS-ATTACK AUC on the SAME final pool (attack_member + final_eval_nonmember):
+  Shokri=0.638  Entropy=0.658  RMIA=0.622
+
+FROZEN SHOKRI full-pool AUC (original core result, kept separately): 0.639
+
+[SAVED] attack_ext_out/scores/nodescores_Cora_client_s42.csv
+[SAVED] attack_ext_out/scores/attackmeta_Cora_client_s42.json
