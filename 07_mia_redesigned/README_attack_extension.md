@@ -23,10 +23,14 @@ score as many times as needed (pure CPU/offline).
 
 ```
 attack_extension/
-├── build_references.py   Stage 1: train reference models, save their outputs (per cell)
-├── score_and_match.py    Stage 2: compute entropy + RMIA, save per-node scores, AUCs
-├── test_extension.py     Automated acceptance tests (integrity + diagnostics)
-├── check_refpack.py      Lighter refpack consistency checker
+├── build_references.py       Stage 1: train reference models, save their outputs (per cell)
+├── score_and_match.py        Stage 2: compute entropy + RMIA, save per-node scores, AUCs
+├── test_extension.py         Automated acceptance tests (integrity + diagnostics)
+├── check_refpack.py          Lighter refpack consistency checker
+├── run_full_extension.sh     Driver: runs Stage 1 + Stage 2 over all 13x5 cells, logs, spot-checks
+├── aggregate_extension.py    Rolls the 65 per-cell outputs into summary_entropy.csv / summary_rmia.csv
+├── make_combined_figures.py  Builds the paper's combined result + impact figures from the summaries
+├── impact_with_real_homophily.py  Recomputes the homophily impact using measured local homophily
 └── README.md
 ```
 
@@ -51,10 +55,10 @@ Population definition (reviewer's requirement): a deterministic subset of the
 retained non-members, disjoint from the calibration nodes and from the final
 evaluation nodes.
 
-Run:
+Run (single cell):
 ```bash
 python build_references.py --datasets Cora --seeds 42 \
-    --frozen-dir results_13x5/raw --out-dir attack_ext_out
+    --frozen-dir results_13x5/raw --out-dir attack_ext_out --ref-seed-base 90000
 ```
 
 ## Stage 2 — score_and_match.py
@@ -159,7 +163,7 @@ The frozen node log (`results_13x5/raw/nodelog_<tag>.csv`) remains the source of
 target M0/MR softmax, true labels, and the Shokri per-node scores; it is not
 modified by this extension.
 
-Run:
+Run (single cell):
 ```bash
 python score_and_match.py --tag Cora_client_s42 \
     --frozen-dir results_13x5/raw --out-dir attack_ext_out
@@ -188,6 +192,134 @@ python test_extension.py --tag Cora_client_s42 \
     --frozen-dir results_13x5/raw --out-dir attack_ext_out
 ```
 
+The single-cell validation (Cora, seed 42) was approved before the full run, with
+26/26 acceptance tests passing and the following scores:
+entropy common-pool AUC 0.658 (C_cal -0.082, C_F +0.009);
+RMIA common-pool AUC 0.622 (C_cal -0.019, C_F +0.019).
+
+---
+
+## Full run over all 13x5 cells — run_full_extension.sh
+
+After the single-cell validation was approved, the extension was run over all 13
+datasets x 5 seeds (65 cells). The driver script runs both stages, writes everything
+to a separate timestamped folder, logs each cell, and spot-checks a few cells.
+
+Run from the directory that contains `build_references.py` etc.:
+```bash
+bash run_full_extension.sh
+```
+
+What it does:
+- **Stage 1** builds 5 reference models for every cell (325 reference models total).
+  M0/MR stay frozen; only the reference models are trained.
+- **Stage 2** scores every cell for entropy + RMIA, one cell at a time, with a
+  per-cell log. A cell that errors is recorded in `failed_cells.txt` and the loop
+  continues, so one bad cell does not halt the run.
+- **Stage 3** runs the acceptance test on a few spot-check cells.
+- Uses `--ref-seed-base 90000`, the value that produced the validated Cora s42 scores,
+  so the full run is consistent with what was approved.
+
+Output folder layout (`extension_results_<timestamp>/`):
+```
+extension_results_<timestamp>/
+├── reference/     refpack_<tag>.json              (one per cell)
+├── scores/        nodescores_<tag>.csv,
+                   attackmeta_<tag>.json           (one each per cell)
+├── logs/          per-cell logs + stage-1 log
+├── failed_cells.txt   (empty on a clean run)
+└── RUN_INFO.txt       (start/finish time, pass counts)
+```
+
+The frozen core (`results_13x5/raw/` and `summary_core.csv`) is read-only throughout:
+both scripts only read the frozen node logs and `summary_core.csv`, and write
+exclusively into the timestamped folder. The 13x5 run completed with 65/65 cells
+scored and 0 failures; the Cora s42 cell reproduced the validated scores exactly
+(entropy 0.658/-0.082/+0.009, RMIA 0.622/-0.019/+0.019), confirming seed determinism
+across the full run.
+
+---
+
+## Aggregation — aggregate_extension.py
+
+Rolls the 65 per-cell outputs into two per-attack summary CSVs with the same columns
+as `summary_core.csv` (the Shokri summary), so all three attacks are interchangeable
+in the plotting pipeline.
+
+```bash
+python aggregate_extension.py --ext-dir extension_results_<timestamp> \
+    --alpha 0.10 --out-dir .
+```
+
+Produces:
+- `summary_entropy.csv` — 65 rows (13 datasets x 5 seeds), one per cell.
+- `summary_rmia.csv`    — 65 rows.
+
+Per cell, per attack, it computes the same quantities as the Shokri summary, read
+from the `*_decision` columns at the fixed operating point:
+- `attack_strength_auc` — the common-pool AUC from `attackmeta`.
+- `C_cal = FPR(H;MR) - alpha`
+- `C_F  = FPR(F;MR) - FPR(H;MR)`
+- `forget_member_rate_M0/MR`, `heldout_member_rate_M0/MR` (so `C_H` is derivable).
+
+The aggregator was checked against the validated Cora s42 cell and reproduced its
+numbers exactly, so the aggregated summaries are faithful to the per-cell outputs.
+
+---
+
+## Figures — make_combined_figures.py
+
+Builds the paper's result and robustness figures directly as combined two-panel PDFs
+(panels composed in matplotlib, inserted as single full-width figures in LaTeX).
+
+```bash
+python make_combined_figures.py \
+    --attacks shokri=summary_core.csv entropy=summary_entropy.csv rmia=summary_rmia.csv \
+    --ext-dir extension_results_<timestamp> --out figs
+```
+
+Produces (PDF + PNG, 400 dpi):
+- `fig_rq2rq3.pdf`       — (a) calibration transfer C_cal per dataset; (b) distribution of C_F.
+- `fig_rq4_overview.pdf` — (a) membership rate on F and H under theta_0 and theta_R
+  (one panel per attack); (b) C_cal vs C_F scatter across all cells.
+- `fig_impact.pdf`       — (a) |C_cal| and |C_F| vs measured homophily; (b) per-dataset
+  C_H for the three attacks.
+
+Homophily for the impact figure is the measured `local_label_agreement` from the
+per-node logs, averaged per dataset — not a literature value.
+
+---
+
+## Results summary (full 13x5, three attacks)
+
+All quantities are at the fixed operating point alpha = 0.10 on the retrained model,
+over 65 cells per attack.
+
+| Quantity | Shadow | Entropy | RMIA |
+|---|---|---|---|
+| Mean AUC | 0.547 | 0.563 | 0.581 |
+| C_cal range | [-0.10, +0.17] | [-0.10, +0.53] | [-0.10, +0.34] |
+| C_cal mean | -0.023 | +0.087 | -0.004 |
+| C_F mean (all cells) | +0.002 | -0.0004 | +0.0003 |
+| C_F mean (AUC >= 0.60) | +0.009 | -0.008 | -0.003 |
+| C_H mean | -0.065 | -0.084 | -0.115 |
+
+Headline findings:
+- **Calibration does not transfer.** C_cal lies outside a +/-0.05 band in 41, 36, and
+  32 of the 65 cells for Shadow, Entropy, and RMIA; the entropy attack is biased
+  upward (mean C_cal +0.087).
+- **Forget ~ reference after retraining.** C_F is centred at zero for all three
+  attacks, including on the datasets where the attacks are strong (Chameleon and
+  Squirrel, AUC ~0.70), so it is not a weak-attack artifact. The spread of C_cal
+  exceeds that of C_F by factors of 4.4 / 6.6 / 2.9.
+- **The reference shifts across models, consistently.** The per-dataset C_H values
+  correlate at ~0.90 between every pair of attacks, and the same datasets (Cora, CS,
+  Computers, Photo) show the largest shifts under all three.
+- **Homophily association.** |C_cal| grows with measured homophily (Pearson r = 0.35,
+  0.51, 0.42) while |C_F| does not (r = -0.21, -0.04, -0.04); reported as an
+  association (moderate, n = 13).
+
+---
 
 ## Reference tables — every score/field, what it means, why it is needed
 
@@ -204,7 +336,7 @@ python test_extension.py --tag Cora_client_s42 \
 | true_class | the node's true label | needed by both attacks (entropy and RMIA use the true-label probability) |
 | membership_label | supervised membership under this stage (F=1@M0,0@MR; H=0 both; member=1; nonmember=0) | ground truth for computing rates and AUC |
 | local_degree | degree within the node's client subgraph | check whether an F/H difference is structural, not membership |
-| local_label_agreement | fraction of client-local neighbours sharing the label (homophily) | sharper structural confound check than degree |
+| local_label_agreement | fraction of client-local neighbours sharing the label (homophily) | sharper structural confound check than degree; also the per-dataset homophily used in the impact figure |
 | correct_prediction | 1 if the target model classifies the node correctly | check whether an F/H difference is a difficulty effect, not membership |
 | entropy_score | target-model modified prediction entropy (lower = more member-like) | the entropy attack's per-node signal |
 | entropy_threshold | per-class decision threshold applied to this node | records the operating point actually used |
@@ -247,6 +379,7 @@ final-eval non-members); RMIA population nodes are excluded from evaluation.
 | held-out member rate (M0, MR) | fraction of H predicted member under each model | H is a non-member in both; a change here is signal moving without a membership change |
 | C_cal = FPR(H;MR) - alpha | how far the calibrated operating point transfers to the removed client | measures whether the absolute signal is calibrated across settings |
 | C_F = FPR(F;MR) - FPR(H;MR) | how far the forget set departs from a matched non-member reference under MR | the main endpoint: ~0 means F is indistinguishable from a matched non-member after retraining |
+| C_H = FPR(H;MR) - FPR(H;M0) | how far the rate on the same non-member reference moves between models | the reference shifts though its membership is unchanged |
 | attack strength AUC (common pool) | member vs non-member AUC on attack_member + final_eval_nonmember | how strong each attack is, on one identical pool for all three |
 
 Note on Shokri and C_cal/C_F: C_cal and C_F are defined on the F and H sets and come
@@ -269,9 +402,20 @@ defined on it.
 - Small datasets: after splitting attack_nonmember into population + final-eval, the
   final-eval pool can be small (e.g. ~20 nodes on Chameleon), so per-cell AUC/threshold
   there are noisier; report the per-cell sizes.
+- The full 13x5 run reproduced the validated Cora s42 scores exactly, confirming the
+  run is consistent with the single-cell cell approved beforehand.
 
-<!-- ## Extending to all cells
+## End-to-end reproduction
 
-After the Cora seed 42 check is approved, run the two stages across all 13 datasets
-× 5 seeds. Stage 1 trains 5 reference models per cell (the only training; M0/MR stay
-frozen); Stage 2 scores offline. The test suite should be run per cell. -->
+```bash
+# 1. full run (Stage 1 + Stage 2 over all 65 cells) -> extension_results_<timestamp>/
+bash run_full_extension.sh
+
+# 2. aggregate the 65 cells into per-attack summaries
+python aggregate_extension.py --ext-dir extension_results_<timestamp> --out-dir .
+
+# 3. build the combined result + impact figures
+python make_combined_figures.py \
+    --attacks shokri=summary_core.csv entropy=summary_entropy.csv rmia=summary_rmia.csv \
+    --ext-dir extension_results_<timestamp> --out figs
+```

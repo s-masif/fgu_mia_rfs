@@ -1,0 +1,23 @@
+\begin{table}
+\caption{Per-dataset attack strength and reference-relative quantities (mean $\pm$ std over 5 seeds). The last column reports the mean number of classes using the pooled-threshold fallback.}
+\label{tab:rq_summary}
+\begin{tabular}{lccccc}
+\toprule
+dataset & AUC & C_cal & C_F & C_H & fallback \\
+\midrule
+Cora & 0.652 $\pm$ 0.028 & -0.063 $\pm$ 0.045 & -0.002 $\pm$ 0.008 & -0.229 $\pm$ 0.238 & 1.2 \\
+Squirrel & 0.649 $\pm$ 0.056 & -0.046 $\pm$ 0.037 & +0.007 $\pm$ 0.030 & -0.023 $\pm$ 0.040 & 1.4 \\
+Actor & 0.635 $\pm$ 0.046 & -0.022 $\pm$ 0.025 & +0.011 $\pm$ 0.014 & +0.009 $\pm$ 0.034 & 0.0 \\
+WikiCS & 0.545 $\pm$ 0.006 & +0.109 $\pm$ 0.064 & +0.009 $\pm$ 0.017 & +0.025 $\pm$ 0.043 & 0.2 \\
+PubMed & 0.541 $\pm$ 0.029 & -0.021 $\pm$ 0.102 & -0.002 $\pm$ 0.003 & -0.035 $\pm$ 0.028 & 0.0 \\
+amazon_ratings & 0.533 $\pm$ 0.007 & -0.072 $\pm$ 0.007 & +0.008 $\pm$ 0.004 & -0.007 $\pm$ 0.009 & 0.0 \\
+Computers & 0.518 $\pm$ 0.011 & -0.063 $\pm$ 0.011 & +0.006 $\pm$ 0.008 & -0.218 $\pm$ 0.230 & 1.2 \\
+roman_empire & 0.517 $\pm$ 0.006 & +0.003 $\pm$ 0.012 & +0.001 $\pm$ 0.004 & -0.000 $\pm$ 0.001 & 0.8 \\
+Photo & 0.516 $\pm$ 0.019 & -0.026 $\pm$ 0.044 & +0.005 $\pm$ 0.016 & -0.126 $\pm$ 0.163 & 0.8 \\
+CS & 0.514 $\pm$ 0.010 & -0.005 $\pm$ 0.060 & +0.001 $\pm$ 0.006 & -0.186 $\pm$ 0.134 & 1.2 \\
+minesweeper & 0.500 $\pm$ 0.012 & -0.028 $\pm$ 0.065 & +0.011 $\pm$ 0.011 & -0.021 $\pm$ 0.040 & 0.0 \\
+Chameleon & 0.494 $\pm$ 0.059 & -0.073 $\pm$ 0.027 & -0.022 $\pm$ 0.023 & -0.053 $\pm$ 0.041 & 5.0 \\
+tolokers & 0.491 $\pm$ 0.020 & +0.004 $\pm$ 0.107 & -0.006 $\pm$ 0.008 & +0.015 $\pm$ 0.027 & 0.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
