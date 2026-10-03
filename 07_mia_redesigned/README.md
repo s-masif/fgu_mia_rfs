@@ -1,4 +1,4 @@
-# Is Membership Inference a Reliable Check for Unlearning in Federated Graphs?
+<!-- # Is Membership Inference a Reliable Check for Unlearning in Federated Graphs?
 
 This folder contains the corrected pipeline for studying whether a **membership
 inference attack (MIA)** can verify unlearning in **federated graph learning**.
@@ -316,4 +316,14 @@ fallback usage; and F/H structural summaries (`local_degree`,
   and therefore NaN `C_cal`/`C_F`; the acceptance suite flags this, and such
   cells should be noted rather than treated as results.
 - Node-level forgetting, additional attacks, and sensitivity sweeps are out of
-  scope for this client-level core.
+  scope for this client-level core. -->
+
+  # 07_mia_redesigned — canonical pipeline
+
+This is the code and results for the paper. The full documentation — repository
+layout, the six-stage pipeline (what each script reads and writes), reproduce-from-
+scratch commands, configuration, and output schema — is in the **root README**
+(`../README.md`).
+
+- Detailed extension notes: `README_attack_extension.md`.
+- Archived/superseded scripts and summaries: `legacy/` (see `legacy/README.md`).
