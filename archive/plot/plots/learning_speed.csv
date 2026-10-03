@@ -1,0 +1,17 @@
+experiment,target_pct,first_episode
+APPO,68,25.0
+APPO,69,84.0
+APPO,70,393.0
+APPO,71,692.0
+PPO,68,82.0
+PPO,69,423.0
+PPO,70,617.0
+PPO,71,719.0
+APPO (masked),68,27.0
+APPO (masked),69,68.0
+APPO (masked),70,604.0
+APPO (masked),71,
+PPO (masked),68,78.0
+PPO (masked),69,395.0
+PPO (masked),70,734.0
+PPO (masked),71,

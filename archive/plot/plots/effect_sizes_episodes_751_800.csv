@@ -1,0 +1,11 @@
+metric,comparison,diff,ci95
+completion_pct,APPO − PPO,0.2754,0.2622
+completion_pct,APPO (masked) − PPO (masked),0.6626,0.265
+high_pct,APPO − PPO,0.3822,0.3745
+high_pct,APPO (masked) − PPO (masked),2.4184,0.3496
+low_pct,APPO − PPO,0.1962,0.2856
+low_pct,APPO (masked) − PPO (masked),-0.549,0.2961
+avg_delay_ms,APPO − PPO,-2.1759,0.7535
+avg_delay_ms,APPO (masked) − PPO (masked),-3.8683,0.7294
+offload_pct,APPO − PPO,-4.3242,1.3009
+offload_pct,APPO (masked) − PPO (masked),-6.0034,0.8549

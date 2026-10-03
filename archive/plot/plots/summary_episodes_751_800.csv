@@ -1,0 +1,5 @@
+experiment,completion_pct_mean,completion_pct_ci95,high_pct_mean,high_pct_ci95,low_pct_mean,low_pct_ci95,priority_gap_pct_mean,priority_gap_pct_ci95,avg_delay_ms_mean,avg_delay_ms_ci95,a_reward_per_task_mean,a_reward_per_task_ci95,offload_pct_mean,offload_pct_ci95,avg_energy_mj_mean,avg_energy_mj_ci95,energy_per_completed_mj_mean,energy_per_completed_mj_ci95,completed_tasks_mean,completed_tasks_ci95,inactive_correct_pct_mean,inactive_correct_pct_ci95
+APPO,71.2922,0.1971,73.9352,0.2964,69.5718,0.1969,4.3634,0.2739,231.7599,0.4104,2.2014,0.0228,51.1898,0.6295,1190.7197,13.9433,1670.5086,21.1837,8026.8385,23.7498,91.3522,0.1461
+PPO,71.0168,0.1778,73.553,0.2363,69.3756,0.2117,4.1774,0.2704,233.9358,0.6412,2.1339,0.0234,55.514,1.1517,1099.1847,25.2798,1547.7204,35.1295,7992.2596,21.0474,61.0072,0.4344
+APPO (masked),70.345,0.1758,71.7864,0.2616,69.3554,0.1863,2.431,0.2637,232.782,0.4368,2.0882,0.0216,51.7282,0.5026,1178.8307,11.9956,1675.9067,17.532,7912.9846,22.0232,100.0,0.0
+PPO (masked),69.6824,0.2026,69.368,0.2385,69.9044,0.2348,-0.5364,0.2542,236.6502,0.5946,1.9342,0.0243,57.7316,0.7035,1052.5074,15.4885,1510.333,21.234,7840.4904,24.2268,100.0,0.0
