@@ -9,7 +9,7 @@
 #
 # Usage:   bash run_full_extension.sh
 # Run this from the directory that contains build_references.py etc.
-# (…/07_mia_redesigned/). Adjust FROZEN_DIR below if your frozen M0/MR live elsewhere.
+# (…/fgu_mia/). Adjust FROZEN_DIR below if your frozen M0/MR live elsewhere.
 # =====================================================================================
 set -euo pipefail
 

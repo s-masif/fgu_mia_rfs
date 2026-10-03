@@ -12,7 +12,7 @@ reference** rather than treating the absolute attack score as a standalone forge
 measure. We evaluate three attacks (shadow-model, modified prediction-entropy, and
 offline RMIA) across 13 datasets and 5 seeds (65 cells).
 
-The paper's code and results live in **`07_mia_redesigned/`**. Earlier exploratory
+The paper's code and results live in **`fgu_mia/`**. Earlier exploratory
 work and superseded iterations are preserved in **`archive/`**.
 
 ---
@@ -21,7 +21,7 @@ work and superseded iterations are preserved in **`archive/`**.
 
 ```
 .
-├── 07_mia_redesigned/        Canonical pipeline and results for the paper
+├── fgu_mia/        Canonical pipeline and results for the paper
 │   ├── models.py             GNN model, dataset loaders, per-dataset config
 │   ├── partition.py          Louvain community-aware partitioning + splits
 │   ├── train.py              federated training; original (M0) and RTS (MR) models
@@ -61,7 +61,7 @@ Kept for provenance; not part of the paper's pipeline.
   README (`archive/README_original_study.md`) and per-experiment guides
   (`archive/docs/`).
 - `05_mia_redesigned/`, `06_mia_redesigned/` — earlier iterations of the redesigned
-  pipeline, superseded by `07_mia_redesigned/`.
+  pipeline, superseded by `fgu_mia/`.
 - `MIA_2/`, `Subsample/`, `files (8)/`, `mia_control_variation/`, loose `mia_*.py` —
   prototype/scratch code and outputs.
 - `plot/` — unrelated reinforcement-learning plots that were in the working tree.
@@ -156,12 +156,12 @@ Reads the three summaries and writes:
 
 ## Reproduce
 
-All commands run from inside `07_mia_redesigned/`.
+All commands run from inside `fgu_mia/`.
 
 ### A. Figures only (from the committed summaries) — fastest
 
 ```bash
-cd 07_mia_redesigned
+cd fgu_mia
 python make_combined_figures.py \
   --attacks shokri=summary_core.csv entropy=summary_entropy.csv rmia=summary_rmia.csv \
   --out figs
@@ -170,7 +170,7 @@ python make_combined_figures.py \
 ### B. Summaries + figures (from the committed core run)
 
 ```bash
-cd 07_mia_redesigned
+cd fgu_mia
 
 # Stages 2-3: build references + score all 65 cells (reads results_13x5/raw/)
 bash run_full_extension.sh                      # writes extension_results_<stamp>/
@@ -202,7 +202,7 @@ To reproduce the paper's numbers exactly, use the committed run
 ### C. Everything from scratch (retrains all cells — expensive)
 
 ```bash
-cd 07_mia_redesigned
+cd fgu_mia
 
 # Stage 1: core run — all 13 datasets x 5 seeds, frozen M0/MR logs
 python experiment_main.py \
@@ -244,11 +244,11 @@ LR, epochs, hidden dim, rounds, optimizer) are in the paper's configuration tabl
 ## Tests
 
 ```bash
-cd 07_mia_redesigned
+cd fgu_mia
 python test_acceptance.py      # core-run integrity (reads results_13x5/)
 python test_extension.py --tag Cora_client_s42 \
   --frozen-dir results_13x5/raw --out-dir extension_results_<stamp>
 ```
 
-See `07_mia_redesigned/README_attack_extension.md` for detailed extension notes and
-`07_mia_redesigned/legacy/README.md` for the archived scripts.
+See `fgu_mia/README_attack_extension.md` for detailed extension notes and
+`fgu_mia/legacy/README.md` for the archived scripts.

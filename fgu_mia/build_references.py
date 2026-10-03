@@ -8,7 +8,7 @@ We never train M0/MR here. The target-side probabilities are read from the froze
 node logs. Only the reference models are trained, each with its own explicit seed,
 so they are reproducible without depending on the M0/MR RNG history.
 
-Run from inside 07_mia_redesigned. First run Cora seed 42, inspect, then extend.
+Run from inside fgu_mia. First run Cora seed 42, inspect, then extend.
 """
 from __future__ import annotations
 import argparse, json, sys, copy

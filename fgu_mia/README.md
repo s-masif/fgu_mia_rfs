@@ -16,7 +16,7 @@ stays meaningful when compared against a matched supervised non-member reference
 ---
 
 git status                          # see what changed
-git add 07_mia_redesigned/          # stage only your code folder (not stray files)
+git add fgu_mia/          # stage only your code folder (not stray files)
 git status                          # confirm what's staged
 git commit -m "what you changed"
 git push
@@ -24,7 +24,7 @@ git push
 ## Files (flat layout)
 
 ```
-07_mia_redesigned/
+fgu_mia/
 ├── models.py            GNN model, dataset loaders, per-dataset config,
 │                        get_metrics (validation-only), CORE_DATASETS / CORE_SEEDS
 ├── partition.py         graph partitioning across clients + train/val/test split
@@ -318,7 +318,7 @@ fallback usage; and F/H structural summaries (`local_degree`,
 - Node-level forgetting, additional attacks, and sensitivity sweeps are out of
   scope for this client-level core. -->
 
-  # 07_mia_redesigned — canonical pipeline
+  # fgu_mia — canonical pipeline
 
 This is the code and results for the paper. The full documentation — repository
 layout, the six-stage pipeline (what each script reads and writes), reproduce-from-
