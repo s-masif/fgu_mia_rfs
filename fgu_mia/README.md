@@ -1,4 +1,4 @@
-<!-- # Is Membership Inference a Reliable Check for Unlearning in Federated Graphs?
+<!-- <!-- # Is Membership Inference a Reliable Check for Unlearning in Federated Graphs?
 
 This folder contains the corrected pipeline for studying whether a **membership
 inference attack (MIA)** can verify unlearning in **federated graph learning**.
@@ -326,4 +326,4 @@ scratch commands, configuration, and output schema — is in the **root README**
 (`../README.md`).
 
 - Detailed extension notes: `README_attack_extension.md`.
-- Archived/superseded scripts and summaries: `legacy/` (see `legacy/README.md`).
+- Archived/superseded scripts and summaries: `legacy/` (see `legacy/README.md`). -->
