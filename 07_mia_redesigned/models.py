@@ -130,8 +130,6 @@ DATASET_CONFIGS = {
                                   "epochs": 5, "hid_dim": 128, "dropout": 0.3,
                                   "num_rounds": 120, "momentum": 0.9, "nesterov": True}},
 
-    # ── NEW: additional homophilic datasets ──────────────────────────────────
-    # Amazon Computers (13,381 nodes, 10 classes) — same loader as Photo
     "Computers": {"type": "amazon", "num_clients": 10, "best_accuracy": 0.85,
                   "params": {"optimizer": "sgd", "lr": 0.01, "weight_decay": 0.0,
                              "epochs": 5, "hid_dim": 128, "dropout": 0.5,

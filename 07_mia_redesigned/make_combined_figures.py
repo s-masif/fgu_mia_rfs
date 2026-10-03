@@ -3,21 +3,22 @@ make_combined_figures.py — combined two-panel figures (built in matplotlib).
 Insert each as a single full-width figure* in LaTeX.
 
 Produces:
-  fig_rq2rq3.pdf       : (a) C_cal per dataset   (b) C_F distribution   [one shared top-center legend]
-  fig_rq4_overview.pdf : (a) F/H transition (3 attack panels)  (b) C_cal vs C_F scatter
-  fig_impact.pdf       : (a) homophily vs |C_cal| & |C_F|   (b) per-dataset C_H
+  fig_rq2rq3.pdf       : (a) C_cal per dataset   (b) C_F distribution   [shared top-center legend]
+  fig_rq4_overview.pdf : (a) F/H transition (3 attack panels, shared y-axis)  (b) C_cal vs C_F scatter
+  fig_impact.pdf       : (a) F and H rates, theta_0 vs theta_R   (b) per-dataset C_H
 
 Run:
   python make_combined_figures.py \
     --attacks shokri=summary_core.csv entropy=summary_entropy.csv rmia=summary_rmia.csv \
-    --ext-dir extension_results_YYYYMMDD_HHMMSS --out figs
+    --out figs
 """
 from __future__ import annotations
-import argparse, glob, itertools
+import argparse, itertools
 from pathlib import Path
 import numpy as np, pandas as pd
 import matplotlib as mpl, matplotlib.pyplot as plt
 import matplotlib.lines as mlines
+import matplotlib.patches as mpatches
 from scipy.stats import pearsonr
 try:
     import seaborn as sns
@@ -41,13 +42,19 @@ mpl.rcParams.update({
     "lines.linewidth":2.2,"lines.markersize":9,
 })
 ALPHA=0.10
+AUC_STRONG=0.60   # "informative" cells for the pre/post F–H panel
+
+# sequential Blues (ColorBrewer), dark -> medium -> light; distinct markers as backup channel
 ATTACK_STYLE={
-    "shokri":  dict(color="#4C72B0",marker="o",label="Shadow"),
-    "entropy": dict(color="#DD8452",marker="s",label="Entropy"),
-    "rmia":    dict(color="#55A868",marker="^",label="RMIA"),
+    "shokri":  dict(color="#08519c", marker="o", label="Shadow"),   # dark blue
+    "entropy": dict(color="#4292c6", marker="s", label="Entropy"),  # medium blue
+    "rmia":    dict(color="#6baed6", marker="^", label="RMIA"),     # light-medium blue (visible on white)
 }
-GREY,RED,GREEN="#333333","#C44E52","#55A868"
-FORGET_C,REF_C="#C44E52","#4C72B0"
+GREY,RED,GREEN="#333333","#C44E52","#2ca25f"
+BLUE_DARK, BLUE_MED, BLUE_LIGHT = "#08519c", "#4292c6", "#9ecae1"
+F_COLOR, H_COLOR = "#08519c", "#9ecae1"   # F = dark blue, H = light blue
+EDGE = "#083b6f"
+FORGET_C, REF_C = "#08519c", "#6baed6"    # for the fig_rq4 transition lines
 
 def _bold_ticks(ax):
     for lbl in ax.get_xticklabels()+ax.get_yticklabels():
@@ -79,6 +86,7 @@ def _grouped(ax, attacks, col, order, dodge=0.18):
         g=df.groupby("dataset")[col].agg(["mean","std"]).reindex(order)
         ax.errorbar(np.arange(len(order))+off,g["mean"],yerr=g["std"],fmt=st["marker"],
                     color=st["color"],ms=9,lw=0,elinewidth=1.8,capsize=4,capthick=1.8,
+                    markeredgecolor=EDGE, markeredgewidth=0.8,
                     label=st["label"],alpha=0.95)
     ax.set_xticks(range(len(order))); ax.set_xticklabels(order,rotation=45,ha="right")
 
@@ -111,8 +119,8 @@ def fig_rq2rq3(attacks,order,out):
 
     # ---- ONE shared figure legend, top-center ----
     handles=[mlines.Line2D([],[],color=ATTACK_STYLE[n]["color"],marker=ATTACK_STYLE[n]["marker"],
-                           linestyle="none",markersize=11,label=ATTACK_STYLE[n]["label"])
-             for n in attacks]
+                           linestyle="none",markersize=11,markeredgecolor=EDGE,
+                           label=ATTACK_STYLE[n]["label"]) for n in attacks]
     handles+=[mlines.Line2D([],[],color=GREEN,lw=2.0,label="perfect transfer"),
               mlines.Line2D([],[],color=GREY,lw=2.0,ls="--",label="forget $=$ reference")]
     leg=fig.legend(handles=handles, loc="upper center", ncol=len(handles),
@@ -120,32 +128,44 @@ def fig_rq2rq3(attacks,order,out):
     _bold_legend(leg)
     _save(fig,out,"fig_rq2rq3")
 
-# ===== FIGURE 2: RQ4 (F/H transition) + overview scatter =====
+# ===== FIGURE 2: RQ4 (F/H transition, shared y-axis) + overview scatter =====
 def fig_rq4_overview(attacks,order,out):
     fig=plt.figure(figsize=(17,6.4))
     nA=len(attacks)
     gs=fig.add_gridspec(1, nA+2, width_ratios=[1]*nA+[0.3,1.6], wspace=0.30)
     fig.subplots_adjust(bottom=0.26, top=0.88)
+
+    # --- global y-range across ALL attacks (shared y-axis) ---
+    rate_cols=["forget_member_rate_M0","forget_member_rate_MR",
+               "heldout_member_rate_M0","heldout_member_rate_MR"]
+    allv=np.concatenate([
+        df.groupby("dataset")[rate_cols].mean().values.ravel()
+        for df in attacks.values()
+    ])
+    ymin=min(0.0,float(allv.min())); ymax=float(allv.max())
+    pad=0.05*(ymax-ymin if ymax>ymin else 1.0)
+    ylo, yhi = ymin-pad, ymax+pad
+
     axes=[fig.add_subplot(gs[0,i]) for i in range(nA)]
     for ax,(name,df) in zip(axes,attacks.items()):
-        g=df.groupby("dataset")[["forget_member_rate_M0","forget_member_rate_MR",
-                                 "heldout_member_rate_M0","heldout_member_rate_MR"]].mean()
+        g=df.groupby("dataset")[rate_cols].mean()
         for _,r in g.iterrows():
             ax.plot([0,1],[r.forget_member_rate_M0,r.forget_member_rate_MR],
                     "-o",color=FORGET_C,alpha=0.6,ms=6,lw=1.6)
             ax.plot([0,1],[r.heldout_member_rate_M0,r.heldout_member_rate_MR],
-                    "-s",color=REF_C,alpha=0.5,ms=6,lw=1.6)
+                    "-s",color=H_COLOR,alpha=0.6,ms=6,lw=1.6)
         ax.axhline(ALPHA,color=GREY,ls="--",lw=1.8)
         ax.set_xticks([0,1])
         ax.set_xticklabels(["$\\boldsymbol{\\theta_0}$","$\\boldsymbol{\\theta_R}$"],fontsize=20)
         ax.set_xlim(-0.35,1.35)
+        ax.set_ylim(ylo, yhi)                      # SHARED y-axis for all three
         ax.text(0.5,1.04,ATTACK_STYLE[name]["label"],transform=ax.transAxes,
                 ha="center",fontsize=18,fontweight="bold")
         _bold_ticks(ax)
     axes[0].set_ylabel("predicted-member rate")
     for ax in axes[1:]: ax.tick_params(labelleft=False)
     axes[0].plot([],[],"-o",color=FORGET_C,label="forget $F$")
-    axes[0].plot([],[],"-s",color=REF_C,label="reference $H$")
+    axes[0].plot([],[],"-s",color=H_COLOR,label="reference $H$")
     legA=axes[0].legend(frameon=False,loc="upper right",fontsize=13); _bold_legend(legA)
     axes[nA//2].text(0.5,-0.28,"(a)",transform=axes[nA//2].transAxes,
                      fontsize=22,fontweight="bold",va="top",ha="center")
@@ -154,7 +174,7 @@ def fig_rq4_overview(attacks,order,out):
     for name,df in attacks.items():
         st=ATTACK_STYLE[name]
         axS.scatter(df.C_cal,df.C_F,color=st["color"],marker=st["marker"],
-                    s=80,alpha=0.8,edgecolor="white",linewidth=0.7,label=st["label"])
+                    s=90,alpha=0.85,edgecolor=EDGE,linewidth=0.6,label=st["label"])
     axS.axhline(0,color=GREY,lw=1.4);axS.axvline(0,color=GREY,lw=1.4)
     axS.axhspan(-0.02,0.02,color=GREEN,alpha=0.12)
     axS.set_xlabel("$\\mathbf{C_{\\mathrm{cal}}}$"); axS.set_ylabel("$\\mathbf{C_F}$")
@@ -163,62 +183,80 @@ def fig_rq4_overview(attacks,order,out):
              va="top",ha="center")
     _save(fig,out,"fig_rq4_overview")
 
-# ===== FIGURE 3: impact (homophily + C_H) =====
-def fig_impact(attacks,order,out,ext_dir):
-    rows=[pd.read_csv(f,usecols=["dataset","local_label_agreement"])
-          for f in glob.glob(str(Path(ext_dir)/"scores"/"nodescores_*.csv"))]
-    homo=pd.concat(rows,ignore_index=True).groupby("dataset").local_label_agreement.mean()
-    for d in attacks.values(): d["homophily"]=d.dataset.map(homo)
-
+# ===== FIGURE 3: (a) F and H rates, theta_0 vs theta_R  (b) per-dataset C_H =====
+def fig_impact(attacks,order,out):
     fig,(axL,axR)=plt.subplots(1,2,figsize=(16,6.6))
-    plt.subplots_adjust(wspace=0.38, bottom=0.32, top=0.90)
-    # (a) homophily vs |C_cal| (filled) and |C_F| (open)
-    for name,df in attacks.items():
-        st=ATTACK_STYLE[name]
-        g=df.groupby("dataset").agg(h=("homophily","first"),cc=("C_cal","mean"),cf=("C_F","mean"))
-        axL.scatter(g.h,g.cc.abs(),color=st["color"],marker=st["marker"],s=120,alpha=0.9,
-                    edgecolor="white",linewidth=0.8,label=f"{st['label']} $|C_{{\\mathrm{{cal}}}}|$")
-        axL.scatter(g.h,g.cf.abs(),facecolors="none",edgecolors=st["color"],marker=st["marker"],
-                    s=120,linewidth=2.0,label=f"{st['label']} $|C_F|$")
-    axL.set_xlabel("dataset homophily"); axL.set_ylabel("deviation")
-    legL=axL.legend(frameon=False,fontsize=12,ncol=2); _bold_legend(legL)
-    _bold_ticks(axL); _panel_label_below(axL,"(a)")
-    # (b) per-dataset C_H bars
+    plt.subplots_adjust(wspace=0.30, bottom=0.32, top=0.88)
+
+    # ---------- (a) F and H member rates at theta_0 and theta_R, informative cells ----------
+    names=list(attacks.keys()); nA=len(names)
+    F0,H0,F1,H1,ns=[],[],[],[],[]
+    for n in names:
+        s=attacks[n][attacks[n].attack_strength_auc>=AUC_STRONG]; ns.append(len(s))
+        F0.append(s.forget_member_rate_M0.mean()); H0.append(s.heldout_member_rate_M0.mean())
+        F1.append(s.forget_member_rate_MR.mean()); H1.append(s.heldout_member_rate_MR.mean())
+
+    w=0.38
+    centers=[]; ticklabels=[]; xcur=0.0
+    for i,name in enumerate(names):
+        for st,(Fv,Hv) in zip([r"$\theta_0$",r"$\theta_R$"],
+                               [(F0[i],H0[i]),(F1[i],H1[i])]):
+            axL.bar(xcur-w/2, Fv, width=w, color=F_COLOR, edgecolor=EDGE, linewidth=1.1, zorder=3)
+            axL.bar(xcur+w/2, Hv, width=w, color=H_COLOR, edgecolor=EDGE, linewidth=1.1, zorder=3)
+            centers.append(xcur); ticklabels.append(st)
+            xcur+=1.3
+        xcur+=0.7   # gap between attacks
+    axL.axhline(ALPHA, color="#111111", ls="--", lw=1.4, zorder=2)
+    axL.set_xticks(centers); axL.set_xticklabels(ticklabels, fontsize=15)
+    for i,name in enumerate(names):
+        c=(centers[2*i]+centers[2*i+1])/2
+        axL.text(c, -0.16, ATTACK_STYLE[name]["label"], transform=axL.get_xaxis_transform(),
+                 ha="center", va="top", fontsize=15, fontweight="bold")
+    axL.set_ylabel("mean predicted-member rate")
+    leg_handles=[
+        mpatches.Patch(facecolor=F_COLOR, edgecolor=EDGE, label="forget $F$"),
+        mpatches.Patch(facecolor=H_COLOR, edgecolor=EDGE, label="reference $H$"),
+    ]
+    legL=axL.legend(handles=leg_handles, frameon=False, fontsize=13, loc="upper right")
+    _bold_legend(legL); _bold_ticks(axL)
+    axL.text(0.5,-0.30,"(a)",transform=axL.transAxes,fontsize=22,fontweight="bold",va="top",ha="center")
+
+    # ---------- (b) per-dataset C_H bars (same blue family) ----------
+    SEQ3=[BLUE_DARK, BLUE_MED, BLUE_LIGHT]
     cH_order=attacks["shokri"].groupby("dataset").C_H.mean().sort_values().index
-    x=np.arange(len(cH_order)); w=0.26
+    xb=np.arange(len(cH_order)); wb=0.26
     for i,(name,df) in enumerate(attacks.items()):
-        st=ATTACK_STYLE[name]
         g=df.groupby("dataset").C_H.mean().reindex(cH_order)
-        axR.bar(x+(i-1)*w,g.values,width=w,color=st["color"],alpha=0.9,
-                edgecolor="#111111",linewidth=1.0,label=st["label"])
-    axR.axhline(0,color="#111111",lw=1.4)
-    axR.set_xticks(x);axR.set_xticklabels(cH_order,rotation=45,ha="right")
+        axR.bar(xb+(i-1)*wb, g.values, width=wb, color=SEQ3[i], alpha=0.95,
+                edgecolor=EDGE, linewidth=1.0, label=ATTACK_STYLE[name]["label"], zorder=3)
+    axR.axhline(0,color="#111111",lw=1.4, zorder=2)
+    axR.set_xticks(xb); axR.set_xticklabels(cH_order, rotation=45, ha="right")
     axR.set_ylabel("$\\mathbf{C_H=\\mathrm{FPR}(H;\\theta_R)-\\mathrm{FPR}(H;\\theta_0)}$")
     legR=axR.legend(frameon=False); _bold_legend(legR)
-    _bold_ticks(axR); _panel_label_below(axR,"(b)")
+    _bold_ticks(axR)
+    axR.text(0.5,-0.42,"(b)",transform=axR.transAxes,fontsize=22,fontweight="bold",va="top",ha="center")
     _save(fig,out,"fig_impact")
 
-    print("\n--- homophily correlations ---")
-    for name,df in attacks.items():
-        g=df.groupby("dataset").agg(h=("homophily","first"),cc=("C_cal","mean"),cf=("C_F","mean"))
-        rc,_=pearsonr(g.h,g.cc.abs()); rf,_=pearsonr(g.h,g.cf.abs())
-        print(f"  {name:8s} corr(homo,|C_cal|)={rc:+.2f}  corr(homo,|C_F|)={rf:+.2f}")
-    print("--- C_H cross-attack ---")
+    # text-verifiable numbers
+    print("\n--- F and H member rates on informative cells (AUC>=%.2f) ---" % AUC_STRONG)
+    for n,f0,h0,f1,h1,k in zip(names,F0,H0,F1,H1,ns):
+        print(f"  {n:8s} n={k:2d}  M0: F={f0:.3f} H={h0:.3f} (gap {f0-h0:+.3f})  "
+              f"MR: F={f1:.3f} H={h1:.3f} (gap {f1-h1:+.3f})")
+    print("--- C_H cross-attack correlation ---")
     cH={n:attacks[n].groupby('dataset').C_H.mean() for n in attacks}
     for a,b in itertools.combinations(attacks,2):
-        r,_=pearsonr(cH[a],cH[b]); print(f"  corr(C_H {a},{b})={r:+.2f}")
+        r,_=pearsonr(cH[a],cH[b]); print(f"  {a}-{b}: {r:+.2f}")
 
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--attacks",nargs="+",required=True)
-    ap.add_argument("--ext-dir",required=True)
     ap.add_argument("--out",default="figs")
     a=ap.parse_args()
     attacks=load_attacks(a.attacks); order=order_by_auc(attacks)
     print(f"attacks: {list(attacks)} | {len(order)} datasets")
     fig_rq2rq3(attacks,order,a.out)
     fig_rq4_overview(attacks,order,a.out)
-    fig_impact(attacks,order,a.out,a.ext_dir)
+    fig_impact(attacks,order,a.out)
     print(f"done -> {a.out}/")
 
 if __name__=="__main__":
