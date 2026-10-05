@@ -1,5 +1,10 @@
-# Rethinking Membership Inference for Unlearning
-### A Reference-Relative View on Federated Graphs
+<div align="center">
+
+<img src="assets/logo_3.png" alt="logo" width="370"/>
+
+**Rethinking Membership Inference for Unlearning: A Reference-Relative View on Federated Graphs.**
+
+</div>
 
 Code and results for our study of whether a **membership inference attack (MIA)** is a
 reliable way to verify unlearning in **federated graph learning**.
