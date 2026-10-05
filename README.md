@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo_3.png" alt="logo" width="370"/>
+<img src="logo_3.png" alt="logo" width="370"/>
 
 **Rethinking Membership Inference for Unlearning: A Reference-Relative View on Federated Graphs.**
 
