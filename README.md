@@ -2,6 +2,23 @@
 
 <img src="logo_3.png" alt="logo" width="370"/>
 
+<h1>Reference-Relative MIA for Federated Graph Unlearning</h1>
+
+<b>Rethinking Membership Inference for Unlearning:<br>A Reference-Relative View on Federated Graphs</b>
+
+<p>
+  <img src="https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white" alt="Python 3.11">
+  <img src="https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white" alt="PyTorch">
+  <img src="https://img.shields.io/badge/PyG-2.4-3C2179" alt="PyG">
+  <img src="https://img.shields.io/badge/status-under%20review-orange" alt="Status">
+</p>
+
+</div>
+
+<div align="center">
+
+<img src="logo_3.png" alt="logo" width="370"/>
+
 **Rethinking Membership Inference for Unlearning: A Reference-Relative View on Federated Graphs.**
 
 </div>
