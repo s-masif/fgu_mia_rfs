@@ -17,8 +17,8 @@ Code and results for our study of whether a **membership inference attack (MIA)*
 reliable way to verify unlearning in **federated graph learning**.
 
 Instead of attacking an approximately unlearned model, we apply a *frozen,
-out-of-sample-calibrated* attack to the **retrain-from-scratch (RTS)** reference — the
-model whose forgetting state is known by construction — and read the forget set against
+out-of-sample-calibrated* attack to the **retrain-from-scratch (RTS)** reference, the
+model whose forgetting state is known by construction and read the forget set against
 a **matched supervised non-member reference** rather than treating the absolute attack
 score as a standalone forgetting measure. We evaluate three attacks (shadow-model,
 modified prediction-entropy, and offline RMIA) across **13 datasets × 5 seeds = 65
