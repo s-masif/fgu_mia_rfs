@@ -1,11 +1,5 @@
 <div align="center">
 
-<img src="logo_3.png" alt="logo" width="370"/>
-
-<h1>Reference-Relative MIA for Federated Graph Unlearning</h1>
-
-<b>Rethinking Membership Inference for Unlearning:<br>A Reference-Relative View on Federated Graphs</b>
-
 <p>
   <img src="https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white" alt="Python 3.11">
   <img src="https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white" alt="PyTorch">
